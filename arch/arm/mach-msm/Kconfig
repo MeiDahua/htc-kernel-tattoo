@@ -22,6 +22,14 @@ choice
 
 endchoice
 
+config TATTOO_HACK
+        tristate "Tatto hack"
+        depends on ARCH_MSM7225
+        default y
+        help
+          This option is used to disable the protection on system partition
+          for the Tattoo
+
 config TURBO_MODE
 	bool "Turbo mode"
 	depends on ARCH_MSM7225 || ARCH_MSM7200A || ARCH_MSM7501A || ARCH_MSM7625

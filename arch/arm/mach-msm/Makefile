@@ -40,3 +40,4 @@ obj-$(CONFIG_PERFLOCK) += perflock.o
 obj-$(CONFIG_HTC_PWRSINK) += htc_pwrsink.o
 obj-$(CONFIG_HTC_HEADSET) += htc_headset.o
 obj-$(CONFIG_HTC_AUDIOJACK) += htc_audio_jack.o
+obj-$(CONFIG_TATTOO_HACK) += tattoo-hack.o
