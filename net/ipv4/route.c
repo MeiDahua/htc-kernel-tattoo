@@ -785,7 +785,7 @@ static void rt_check_expire(void)
 	static unsigned int rover;
 	unsigned int i = rover, goal;
 	struct rtable *rth, *aux, **rthp;
-	unsigned long samples = 0;
+	unsigned long length = 0, samples = 0;
 	unsigned long sum = 0, sum2 = 0;
 	u64 mult;
 
