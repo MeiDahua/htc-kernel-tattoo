@@ -30,6 +30,7 @@ void debug_mutex_set_owner(struct mutex *lock, struct thread_info *new_owner)
 {
 	lock->owner = new_owner;
 }
+EXPORT_SYMBOL(debug_mutex_set_owner);
 
 void debug_mutex_lock_common(struct mutex *lock, struct mutex_waiter *waiter)
 {
