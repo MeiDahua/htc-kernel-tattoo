@@ -22,9 +22,6 @@
 #include <linux/freezer.h>
 #include <linux/vmstat.h>
 #include <linux/syscalls.h>
-#ifdef REMOVE_FROM_2_6_27
-#include <linux/ftrace.h>
-#endif
 
 #include "power.h"
 
@@ -324,9 +321,6 @@ static int suspend_enter(suspend_state_t state)
 int suspend_devices_and_enter(suspend_state_t state)
 {
 	int error;
-#ifdef REMOVE_FROM_2_6_27
-    int ftrace_save;
-#endif
 
 	if (!suspend_ops)
 		return -ENOSYS;
@@ -337,9 +331,6 @@ int suspend_devices_and_enter(suspend_state_t state)
 			goto Close;
 	}
 	suspend_console();
-#ifdef REMOVE_FROM_2_6_27
-	ftrace_save = __ftrace_enabled_save();
-#endif
 	suspend_test_start();
 	error = device_suspend(PMSG_SUSPEND);
 	if (error) {
@@ -371,9 +362,6 @@ int suspend_devices_and_enter(suspend_state_t state)
 	suspend_test_start();
 	device_resume(PMSG_RESUME);
 	suspend_test_finish("resume devices");
-#ifdef REMOVE_FROM_2_6_27
-	__ftrace_enabled_restore(ftrace_save);
-#endif
 	resume_console();
  Close:
 	if (suspend_ops->end)
@@ -403,15 +391,6 @@ static void suspend_finish(void)
 
 
 
-#ifdef CONFIG_PM_LEGACY
-static const char * const pm_states[PM_SUSPEND_MAX] = {
-#ifdef CONFIG_EARLYSUSPEND
-	[PM_SUSPEND_ON]		= "wake",
-#endif
-	[PM_SUSPEND_STANDBY]	= "unknown",
-	[PM_SUSPEND_MEM]	= "standby",
-};
-#else
 static const char * const pm_states[PM_SUSPEND_MAX] = {
 #ifdef CONFIG_EARLYSUSPEND
 	[PM_SUSPEND_ON]		= "on",
@@ -420,7 +399,6 @@ static const char * const pm_states[PM_SUSPEND_MAX] = {
 	[PM_SUSPEND_MEM]	= "mem",
 };
 
-#endif
 static inline int valid_state(suspend_state_t state)
 {
 	/* All states need lowlevel support and need to be valid
@@ -576,63 +554,6 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 
 power_attr(state);
 
-#ifdef CONFIG_PM_LEGACY
-static ssize_t request_state_show(struct kobject *kobj, struct kobj_attribute *attr,
-			  char *buf)
-{
-	char *s = buf;
-#ifdef CONFIG_SUSPEND
-	s += sprintf(s,"%s\n", pm_states[requested_suspend_state]);
-#else
-	s += sprintf(s,"suspend not supported\n");
-#endif
-	return (s - buf);
-}
-static ssize_t request_state_store(struct kobject *kobj, struct kobj_attribute *attr,
-			   const char *buf, size_t n)
-{
-	return state_store(kobj, attr, buf, n);
-}
-power_attr(request_state);
-
-ssize_t acquire_full_wake_lock_show(
-	struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	return wake_lock_show(kobj, attr, buf);
-}
-ssize_t acquire_full_wake_lock_store(
-	struct kobject *kobj, struct kobj_attribute *attr,
-	const char *buf, size_t n)
-{
-	return wake_lock_store(kobj, attr, buf, n);
-}
-ssize_t acquire_partial_wake_lock_show(
-	struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	return wake_lock_show(kobj, attr, buf);
-}
-ssize_t acquire_partial_wake_lock_store(
-	struct kobject *kobj, struct kobj_attribute *attr,
-	const char *buf, size_t n)
-{
-	return wake_lock_store(kobj, attr, buf, n);
-}
-ssize_t release_wake_lock_show(
-	struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	return wake_unlock_show(kobj, attr, buf);
-}
-ssize_t release_wake_lock_store(
-	struct kobject *kobj, struct kobj_attribute *attr,
-	const char *buf, size_t n)
-{
-	return wake_unlock_store(kobj, attr, buf, n);
-}
-power_attr(acquire_full_wake_lock);
-power_attr(acquire_partial_wake_lock);
-power_attr(release_wake_lock);
-#endif
-
 #ifdef CONFIG_PM_TRACE
 int pm_trace_enabled;
 
@@ -665,12 +586,6 @@ power_attr(wake_unlock);
 
 static struct attribute * g[] = {
 	&state_attr.attr,
-#ifdef CONFIG_PM_LEGACY
-	&request_state_attr.attr,
-	&acquire_full_wake_lock_attr.attr,	
-	&acquire_partial_wake_lock_attr.attr,
-	&release_wake_lock_attr.attr,
-#endif
 #ifdef CONFIG_PM_TRACE
 	&pm_trace_attr.attr,
 #endif
@@ -691,11 +606,7 @@ static struct attribute_group attr_group = {
 
 static int __init pm_init(void)
 {
-#ifdef CONFIG_PM_LEGACY
-	power_kobj = kobject_create_and_add("android_power", NULL);	
-#else
 	power_kobj = kobject_create_and_add("power", NULL);
-#endif
 	if (!power_kobj)
 		return -ENOMEM;
 	return sysfs_create_group(power_kobj, &attr_group);

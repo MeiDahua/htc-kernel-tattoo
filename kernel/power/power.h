@@ -53,17 +53,6 @@ extern int hibernation_platform_enter(void);
 
 extern int pfn_is_nosave(unsigned long);
 
-#ifdef CONFIG_PM_LEGACY
-#define power_attr(_name) \
-static struct kobj_attribute _name##_attr = {	\
-	.attr	= {				\
-		.name = __stringify(_name),	\
-		.mode = 0664,			\
-	},					\
-	.show	= _name##_show,			\
-	.store	= _name##_store,		\
-}
-#else
 #define power_attr(_name) \
 static struct kobj_attribute _name##_attr = {	\
 	.attr	= {				\
@@ -73,7 +62,6 @@ static struct kobj_attribute _name##_attr = {	\
 	.show	= _name##_show,			\
 	.store	= _name##_store,		\
 }
-#endif
 
 /* Preferred image size in bytes (default 500 MB) */
 extern unsigned long image_size;
@@ -239,7 +227,6 @@ static inline void suspend_thaw_processes(void)
 #ifdef CONFIG_WAKELOCK
 /* kernel/power/wakelock.c */
 extern struct workqueue_struct *suspend_work_queue;
-extern struct workqueue_struct *early_suspend_work_queue;
 extern struct wake_lock main_wake_lock;
 extern suspend_state_t requested_suspend_state;
 #endif

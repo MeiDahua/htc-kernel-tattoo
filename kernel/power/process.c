@@ -83,22 +83,21 @@ static int try_to_freeze_tasks(bool sig_only)
 		 * and caller must call thaw_processes() if something fails),
 		 * but it cleans up leftover PF_FREEZE requests.
 		 */
-		if(wakeup) {
-			printk("\n");
-			printk(KERN_ERR "Freezing of %s aborted\n",
-					sig_only ? "user space " : "tasks ");
-		}
-		else {
-			printk("\n");
-			printk(KERN_ERR "Freezing of tasks failed after %d.%02d seconds "
-					"(%d tasks refusing to freeze):\n",
-					elapsed_csecs / 100, elapsed_csecs % 100, todo);
+		printk("\n");
+		printk(KERN_ERR "Freezing of tasks %s after %d.%02d seconds "
+				"(%d tasks refusing to freeze):\n",
+				wakeup ? "aborted" : "failed",
+				elapsed_csecs / 100, elapsed_csecs % 100, todo);
+		if(!wakeup)
 			show_state();
-		}
+		else
+			print_active_locks(WAKE_LOCK_SUSPEND);
+
 		read_lock(&tasklist_lock);
 		do_each_thread(g, p) {
 			task_lock(p);
-			if (freezing(p) && !freezer_should_skip(p))
+			if (freezing(p) && !freezer_should_skip(p) &&
+							elapsed_csecs > 100)
 				printk(KERN_ERR " %s\n", p->comm);
 			cancel_freezing(p);
 			task_unlock(p);
@@ -158,10 +157,10 @@ static void thaw_tasks(bool nosig_only)
 
 void thaw_processes(void)
 {
-	printk(KERN_INFO "[R] Restarting tasks ... \n");
+	printk("Restarting tasks ... ");
 	thaw_tasks(true);
 	thaw_tasks(false);
 	schedule();
-	printk(KERN_INFO "[R] thaw tasks done.\n");
+	printk("done.\n");
 }
 

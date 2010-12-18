@@ -75,7 +75,8 @@ static void early_suspend(struct work_struct *work)
 	struct early_suspend *pos;
 	unsigned long irqflags;
 	int abort = 0;
-	pr_info("[R] early_suspend bin\n");
+
+	pr_info("[R] early_suspend start\n");
 	mutex_lock(&early_suspend_lock);
 	spin_lock_irqsave(&state_lock, irqflags);
 	if (state == SUSPEND_REQUESTED)
@@ -87,7 +88,6 @@ static void early_suspend(struct work_struct *work)
 	if (abort) {
 		if (debug_mask & DEBUG_SUSPEND)
 			pr_info("early_suspend: abort, state %d\n", state);
-		pr_info("[R] early_suspend: abort, state %d\n", state);
 		mutex_unlock(&early_suspend_lock);
 		goto abort;
 	}
@@ -103,8 +103,7 @@ static void early_suspend(struct work_struct *work)
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("early_suspend: sync\n");
 
-	/* XXX: To speed up early suspend */
-	/* sys_sync(); */
+	sys_sync();
 abort:
 	spin_lock_irqsave(&state_lock, irqflags);
 	if (state == SUSPEND_REQUESTED_AND_SUSPENDED)
@@ -118,7 +117,8 @@ static void late_resume(struct work_struct *work)
 	struct early_suspend *pos;
 	unsigned long irqflags;
 	int abort = 0;
-	pr_info("[R] late_resume bin\n");
+
+	pr_info("[R] late_resume start\n");
 	mutex_lock(&early_suspend_lock);
 	spin_lock_irqsave(&state_lock, irqflags);
 	if (state == SUSPENDED)
@@ -130,7 +130,6 @@ static void late_resume(struct work_struct *work)
 	if (abort) {
 		if (debug_mask & DEBUG_SUSPEND)
 			pr_info("late_resume: abort, state %d\n", state);
-		pr_info("[R] late_resume: abort, state %d\n", state);
 		goto abort;
 	}
 	if (debug_mask & DEBUG_SUSPEND)
@@ -157,7 +156,7 @@ void request_suspend_state(suspend_state_t new_state)
 		struct rtc_time tm;
 		getnstimeofday(&ts);
 		rtc_time_to_tm(ts.tv_sec, &tm);
-		pr_info("[R] request_suspend_state: %s (%d->%d) at %lld "
+		pr_info("request_suspend_state: %s (%d->%d) at %lld "
 			"(%d-%02d-%02d %02d:%02d:%02d.%09lu UTC)\n",
 			new_state != PM_SUSPEND_ON ? "sleep" : "wakeup",
 			requested_suspend_state, new_state,
@@ -167,11 +166,11 @@ void request_suspend_state(suspend_state_t new_state)
 	}
 	if (!old_sleep && new_state != PM_SUSPEND_ON) {
 		state |= SUSPEND_REQUESTED;
-		queue_work(early_suspend_work_queue, &early_suspend_work);
+		queue_work(suspend_work_queue, &early_suspend_work);
 	} else if (old_sleep && new_state == PM_SUSPEND_ON) {
 		state &= ~SUSPEND_REQUESTED;
 		wake_lock(&main_wake_lock);
-		queue_work(early_suspend_work_queue, &late_resume_work);
+		queue_work(suspend_work_queue, &late_resume_work);
 	}
 	requested_suspend_state = new_state;
 	spin_unlock_irqrestore(&state_lock, irqflags);
