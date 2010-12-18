@@ -263,10 +263,12 @@ int bahamas_wifi_power(int on)
 				  ARRAY_SIZE(wifi_on_gpio_table));
 		vreg_enable(vreg_wifi_batpa);
 		vreg_set_level(vreg_wifi_batpa, 3000);
-		mdelay(50);
+		//mdelay(50);
+		msleep(50);
 		rc = vreg_enable(vreg_wifi_osc);
 		vreg_set_level(vreg_wifi_osc, 1800);
-		mdelay(50);
+		//mdelay(50);
+		msleep(50);
 		htc_pwrsink_set(PWRSINK_WIFI, 70);
 		if (rc)
 			return rc;
@@ -275,9 +277,11 @@ int bahamas_wifi_power(int on)
 				  ARRAY_SIZE(wifi_off_gpio_table));
 		htc_pwrsink_set(PWRSINK_WIFI, 0);
 	}
-	mdelay(100);
+	//mdelay(100);
+	msleep(100);
 	gpio_set_value( BAHAMAS_GPIO_WIFI_EN, on);
-	mdelay(100);
+	//mdelay(100);
+	msleep(100);
 	if (!on) {
 		if (!bahamas_bt_power_state) {
 			vreg_disable(vreg_wifi_osc);
@@ -328,7 +332,8 @@ int bahamas_wifi_reset(int on)
 	printk(KERN_INFO "%s: %d\n", __func__, on);
 	gpio_set_value(TROUT_GPIO_WIFI_PA_RESETX, !on);
 	bahamas_wifi_reset_state = on;
-	mdelay(50);
+	//mdelay(50);
+	msleep(50);
 #endif
 	return 0;
 }
