@@ -113,7 +113,6 @@ static yaffs_Tnode *yaffs_FindLevel0Tnode(yaffs_Device *dev,
 					yaffs_FileStructure *fStruct,
 					__u32 chunkId);
 
-
 /* Function to calculate chunk and offset */
 
 static void yaffs_AddrToChunk(yaffs_Device *dev, loff_t addr, int *chunkOut,
@@ -1013,6 +1012,80 @@ static int yaffs_WriteNewChunkWithTagsToNAND(struct yaffs_DeviceStruct *dev,
 }
 
 /*
+ * Oldest Dirty Sequence Number handling.
+ */
+
+/* yaffs_CalcOldestDirtySequence()
+ * yaffs_FindOldestDirtySequence()
+ * Calculate the oldest dirty sequence number if we don't know it.
+ */
+static int yaffs_CalcOldestDirtySequence(yaffs_Device *dev)
+{
+	int i;
+	__u32 seq;
+	yaffs_BlockInfo *b = 0;
+
+	if (!dev->isYaffs2)
+		return 0;
+
+	/* Find the oldest dirty sequence number. */
+	seq = dev->sequenceNumber;
+	for (i = dev->internalStartBlock; i <= dev->internalEndBlock; i++) {
+		b = yaffs_GetBlockInfo(dev, i);
+		if (b->blockState == YAFFS_BLOCK_STATE_FULL &&
+		    (b->pagesInUse - b->softDeletions) < dev->nChunksPerBlock &&
+		    b->sequenceNumber < seq)
+				seq = b->sequenceNumber;
+	}
+	return seq;
+}
+
+
+static void yaffs_FindOldestDirtySequence(yaffs_Device *dev)
+{
+	if (dev->isYaffs2 && !dev->oldestDirtySequence)
+		dev->oldestDirtySequence =
+			yaffs_CalcOldestDirtySequence(dev);
+
+#if 0
+	if (!yaffs_SkipVerification(dev) &&
+		dev->oldestDirtySequence != yaffs_CalcOldestDirtySequence(dev))
+		YBUG();
+
+#endif
+}
+
+/*
+ * yaffs_ClearOldestDirtySequence()
+ * Called when a block is erased or marked bad. (ie. when its sequenceNumber
+ * becomes invalid). If the value matches the oldest then we clear
+ * dev->oldestDirtySequence to force its recomputation.
+ */
+static void yaffs_ClearOldestDirtySequence(yaffs_Device *dev,
+					yaffs_BlockInfo *bi)
+{
+	if (!dev->isYaffs2)
+		return;
+
+	if (!bi || bi->sequenceNumber == dev->oldestDirtySequence)
+		dev->oldestDirtySequence = 0;
+}
+
+/*
+ * yaffs_UpdateOldestDirtySequence()
+ * Update the oldest dirty sequence number whenever we dirty a block.
+ * Only do this if the oldestDirtySequence is actually being tracked.
+ */
+static void yaffs_UpdateOldestDirtySequence(yaffs_Device *dev,
+					yaffs_BlockInfo *bi)
+{
+	if (dev->isYaffs2 && dev->oldestDirtySequence) {
+		if (dev->oldestDirtySequence > bi->sequenceNumber)
+			dev->oldestDirtySequence = bi->sequenceNumber;
+	}
+}
+
+/*
  * Block retiring for handling a broken block.
  */
 
@@ -1021,6 +1094,8 @@ static void yaffs_RetireBlock(yaffs_Device *dev, int blockInNAND)
 	yaffs_BlockInfo *bi = yaffs_GetBlockInfo(dev, blockInNAND);
 
 	yaffs_InvalidateCheckpoint(dev);
+
+	yaffs_ClearOldestDirtySequence(dev, bi);
 
 	if (yaffs_MarkBlockBad(dev, blockInNAND) != YAFFS_OK) {
 		if (yaffs_EraseBlockInNAND(dev, blockInNAND) != YAFFS_OK) {
@@ -1545,7 +1620,7 @@ static int yaffs_FindChunkInGroup(yaffs_Device *dev, int theChunk,
 	for (j = 0; theChunk && j < dev->chunkGroupSize; j++) {
 		if (yaffs_CheckChunkBit(dev, theChunk / dev->nChunksPerBlock,
 				theChunk % dev->nChunksPerBlock)) {
-
+			
 			if(dev->chunkGroupSize == 1)
 				return theChunk;
 			else {
@@ -1666,6 +1741,7 @@ static void yaffs_SoftDeleteChunk(yaffs_Device *dev, int chunk)
 	if (theBlock) {
 		theBlock->softDeletions++;
 		dev->nFreeChunks++;
+		yaffs_UpdateOldestDirtySequence(dev, theBlock);
 	}
 }
 
@@ -2466,12 +2542,16 @@ int yaffs_RenameObject(yaffs_Object *oldDir, const YCHAR *oldName,
 	yaffs_Object *obj = NULL;
 	yaffs_Object *existingTarget = NULL;
 	int force = 0;
+	int result;
+	yaffs_Device *dev;
 
 
 	if (!oldDir || oldDir->variantType != YAFFS_OBJECT_TYPE_DIRECTORY)
 		YBUG();
 	if (!newDir || newDir->variantType != YAFFS_OBJECT_TYPE_DIRECTORY)
 		YBUG();
+
+	dev = oldDir->myDev;
 
 #ifdef CONFIG_YAFFS_CASE_INSENSITIVE
 	/* Special case for case insemsitive systems (eg. WinCE).
@@ -2482,7 +2562,7 @@ int yaffs_RenameObject(yaffs_Object *oldDir, const YCHAR *oldName,
 		force = 1;
 #endif
 
-	else if (yaffs_strlen(newName) > YAFFS_MAX_NAME_LENGTH)
+	if(yaffs_strlen(newName) > YAFFS_MAX_NAME_LENGTH)
 		/* ENAMETOOLONG */
 		return YAFFS_FAIL;
 
@@ -2500,17 +2580,26 @@ int yaffs_RenameObject(yaffs_Object *oldDir, const YCHAR *oldName,
 			return YAFFS_FAIL;	/* EEXIST or ENOTEMPTY */
 		} else if (existingTarget && existingTarget != obj) {
 			/* Nuke the target first, using shadowing,
-			 * but only if it isn't the same object
+			 * but only if it isn't the same object.
+			 *
+			 * Note we must disable gc otherwise it can mess up the shadowing.
+			 *
 			 */
+			dev->isDoingGC=1;
 			yaffs_ChangeObjectName(obj, newDir, newName, force,
 						existingTarget->objectId);
+			existingTarget->isShadowed = 1;
 			yaffs_UnlinkObject(existingTarget);
+			dev->isDoingGC=0;
 		}
+
+		result = yaffs_ChangeObjectName(obj, newDir, newName, 1, 0);
+
 		yaffs_UpdateParent(oldDir);
 		if(newDir != oldDir)
 			yaffs_UpdateParent(newDir);
 
-		return yaffs_ChangeObjectName(obj, newDir, newName, 1, 0);
+		return result;
 	}
 	return YAFFS_FAIL;
 }
@@ -2576,33 +2665,10 @@ static void yaffs_DeinitialiseBlocks(yaffs_Device *dev)
 static int yaffs_BlockNotDisqualifiedFromGC(yaffs_Device *dev,
 					yaffs_BlockInfo *bi)
 {
-	int i;
-	__u32 seq;
-	yaffs_BlockInfo *b;
-
 	if (!dev->isYaffs2)
 		return 1;	/* disqualification only applies to yaffs2. */
 
-	if (!bi->hasShrinkHeader)
-		return 1;	/* can gc */
-
-	/* Find the oldest dirty sequence number if we don't know it and save it
-	 * so we don't have to keep recomputing it.
-	 */
-	if (!dev->oldestDirtySequence) {
-		seq = dev->sequenceNumber;
-
-		for (i = dev->internalStartBlock; i <= dev->internalEndBlock;
-				i++) {
-			b = yaffs_GetBlockInfo(dev, i);
-			if (b->blockState == YAFFS_BLOCK_STATE_FULL &&
-			    (b->pagesInUse - b->softDeletions) <
-			    dev->nChunksPerBlock && b->sequenceNumber < seq) {
-				seq = b->sequenceNumber;
-			}
-		}
-		dev->oldestDirtySequence = seq;
-	}
+	yaffs_FindOldestDirtySequence(dev);
 
 	/* Can't do gc of this block if there are any blocks older than this one that have
 	 * discarded pages.
@@ -2705,10 +2771,8 @@ static int yaffs_FindBlockForGarbageCollection(yaffs_Device *dev,
 		   dev->nChunksPerBlock - pagesInUse, prioritised));
 	}
 
-	dev->oldestDirtySequence = 0;
-
 	if (dirtiest > 0)
-		dev->nonAggressiveSkip = 4;
+		dev->nonAggressiveSkip = 2;
 
 	return dirtiest;
 }
@@ -2726,6 +2790,8 @@ static void yaffs_BlockBecameDirty(yaffs_Device *dev, int blockNo)
 	T(YAFFS_TRACE_GC | YAFFS_TRACE_ERASE,
 		(TSTR("yaffs_BlockBecameDirty block %d state %d %s"TENDSTR),
 		blockNo, bi->blockState, (bi->needsRetiring) ? "needs retiring" : ""));
+
+	yaffs_ClearOldestDirtySequence(dev, bi);
 
 	bi->blockState = YAFFS_BLOCK_STATE_DIRTY;
 
@@ -2986,7 +3052,7 @@ static int yaffs_GarbageCollectBlock(yaffs_Device *dev, int block,
 
 	if(bi->blockState == YAFFS_BLOCK_STATE_FULL)
 		bi->blockState = YAFFS_BLOCK_STATE_COLLECTING;
-
+	
 	bi->hasShrinkHeader = 0;	/* clear the flag so that the block can erase */
 
 	/* Take off the number of soft deleted entries because
@@ -3109,6 +3175,7 @@ static int yaffs_GarbageCollectBlock(yaffs_Device *dev, int block,
 					if (tags.chunkId == 0) {
 						/* It is an object Id,
 						 * We need to nuke the shrinkheader flags first
+						 * Also need to clean up shadowing.
 						 * We no longer want the shrinkHeader flag since its work is done
 						 * and if it is left in place it will mess up scanning.
 						 */
@@ -3117,6 +3184,9 @@ static int yaffs_GarbageCollectBlock(yaffs_Device *dev, int block,
 						oh = (yaffs_ObjectHeader *)buffer;
 						oh->isShrink = 0;
 						tags.extraIsShrinkHeader = 0;
+						oh->shadowsObject = 0;
+						oh->inbandShadowsObject = 0;
+						tags.extraShadows = 0;
 
 						yaffs_VerifyObjectHeader(object, oh, &tags, 1);
 					}
@@ -3568,6 +3638,8 @@ void yaffs_DeleteChunk(yaffs_Device *dev, int chunkId, int markNAND, int lyn)
 			 chunkId));
 
 	bi = yaffs_GetBlockInfo(dev, block);
+
+	yaffs_UpdateOldestDirtySequence(dev, bi);
 
 	T(YAFFS_TRACE_DELETION,
 	  (TSTR("line %d delete of chunk %d" TENDSTR), lyn, chunkId));
@@ -5031,11 +5103,13 @@ int yaffs_ResizeFile(yaffs_Object *in, loff_t newSize)
 	}
 
 
-	/* Write a new object header.
+	/* Write a new object header to reflect the resize.
 	 * show we've shrunk the file, if need be
-	 * Do this only if the file is not in the deleted directories.
+	 * Do this only if the file is not in the deleted directories
+	 * and is not shadowed.
 	 */
 	if (in->parent &&
+	    !in->isShadowed &&
 	    in->parent->objectId != YAFFS_OBJECTID_UNLINKED &&
 	    in->parent->objectId != YAFFS_OBJECTID_DELETED)
 		yaffs_UpdateObjectHeader(in, NULL, 0,
@@ -5263,23 +5337,26 @@ static int yaffs_UnlinkWorker(yaffs_Object *obj)
 		 * Instead, we do the following:
 		 * - Select a hardlink.
 		 * - Unhook it from the hard links
-		 * - Unhook it from its parent directory (so that the rename can work)
+		 * - Move it from its parent directory (so that the rename can work)
 		 * - Rename the object to the hardlink's name.
 		 * - Delete the hardlink
 		 */
 
 		yaffs_Object *hl;
+		yaffs_Object *parent;
 		int retVal;
 		YCHAR name[YAFFS_MAX_NAME_LENGTH + 1];
 
 		hl = ylist_entry(obj->hardLinks.next, yaffs_Object, hardLinks);
 
-		ylist_del_init(&hl->hardLinks);
-		ylist_del_init(&hl->siblings);
-
 		yaffs_GetObjectName(hl, name, YAFFS_MAX_NAME_LENGTH + 1);
+		parent = hl->parent;
 
-		retVal = yaffs_ChangeObjectName(obj, hl->parent, name, 0, 0);
+		ylist_del_init(&hl->hardLinks);
+
+		yaffs_AddObjectToDirectory(obj->myDev->unlinkedDir, hl);
+
+		retVal = yaffs_ChangeObjectName(obj,parent, name, 0, 0);
 
 		if (retVal == YAFFS_OK)
 			retVal = yaffs_DoGenericObjectDeletion(hl);
@@ -5346,7 +5423,8 @@ static void yaffs_HandleShadowedObject(yaffs_Device *dev, int objId,
 		/* Handle YAFFS2 case (backward scanning)
 		 * If the shadowed object exists then ignore.
 		 */
-		if (yaffs_FindObjectByNumber(dev, objId))
+		obj = yaffs_FindObjectByNumber(dev, objId);
+		if(obj)
 			return;
 	}
 
@@ -5358,6 +5436,7 @@ static void yaffs_HandleShadowedObject(yaffs_Device *dev, int objId,
 					     YAFFS_OBJECT_TYPE_FILE);
 	if (!obj)
 		return;
+	obj->isShadowed = 1;
 	yaffs_AddObjectToDirectory(dev->unlinkedDir, obj);
 	obj->variant.fileVariant.shrinkSize = 0;
 	obj->valid = 1;		/* So that we don't read any other info for this file */
@@ -5448,6 +5527,128 @@ static void yaffs_StripDeletedObjects(yaffs_Device *dev)
 		}
 	}
 
+}
+
+/*
+ * This code iterates through all the objects making sure that they are rooted.
+ * Any unrooted objects are re-rooted in lost+found.
+ * An object needs to be in one of:
+ * - Directly under deleted, unlinked
+ * - Directly or indirectly under root.
+ *
+ * Note:
+ *  This code assumes that we don't ever change the current relationships
+ *  between directories:
+ *   rootDir->parent == unlinkedDir->parent == deletedDir->parent == NULL
+ *   lostNfound->parent == rootDir
+ *
+ * This fixes the problem where directories might have inadvertently been
+ * deleted leaving the object "hanging" without being rooted in the directory
+ * tree.
+ */
+
+static int yaffs_HasNULLParent(yaffs_Device *dev, yaffs_Object *obj)
+{
+	return (obj == dev->deletedDir ||
+		obj == dev->unlinkedDir ||
+		obj == dev->rootDir);
+}
+
+static void yaffs_FixHangingObjects(yaffs_Device *dev)
+{
+	yaffs_Object *obj;
+	yaffs_Object *parent;
+	int i;
+	struct ylist_head *lh;
+	struct ylist_head *n;
+	int depthLimit;
+	int hanging;
+
+
+	/* Iterate through the objects in each hash entry,
+	 * looking at each object.
+	 * Make sure it is rooted.
+	 */
+
+	for (i = 0; i <  YAFFS_NOBJECT_BUCKETS; i++) {
+		ylist_for_each_safe(lh, n, &dev->objectBucket[i].list) {
+			if (lh) {
+				obj = ylist_entry(lh, yaffs_Object, hashLink);
+				parent = obj->parent;
+
+				if (yaffs_HasNULLParent(dev, obj)) {
+					/* These directories are not hanging */
+					hanging = 0;
+				} else if (!parent || parent->variantType !=
+						YAFFS_OBJECT_TYPE_DIRECTORY)
+					hanging = 1;
+				else if (yaffs_HasNULLParent(dev, parent))
+					hanging = 0;
+				else {
+					/*
+					 * Need to follow the parent chain to
+					 * see if it is hanging.
+					 */
+					hanging = 0;
+					depthLimit = 100;
+
+					while (parent != dev->rootDir &&
+						parent->parent &&
+						parent->parent->variantType ==
+						YAFFS_OBJECT_TYPE_DIRECTORY &&
+						depthLimit > 0){
+						parent = parent->parent;
+						depthLimit--;
+					}
+					if (parent != dev->rootDir)
+						hanging = 1;
+				}
+				if (hanging) {
+					T(YAFFS_TRACE_SCAN,
+					(TSTR("Hanging object %d moved to lost and found" TENDSTR),
+					obj->objectId));
+					yaffs_AddObjectToDirectory(dev->lostNFoundDir, obj);
+				}
+			}
+		}
+	}
+}
+
+
+/*
+ * Delete directory contents for cleaning up lost and found.
+ */
+static void yaffs_DeleteDirectoryContents(yaffs_Object *dir)
+{
+	yaffs_Object *obj;
+	struct ylist_head *lh;
+	struct ylist_head *n;
+
+	if (dir->variantType != YAFFS_OBJECT_TYPE_DIRECTORY)
+		YBUG();
+
+	ylist_for_each_safe(lh, n, &dir->variant.directoryVariant.children) {
+		if (lh) {
+			obj = ylist_entry(lh, yaffs_Object, siblings);
+			if (obj->variantType == YAFFS_OBJECT_TYPE_DIRECTORY)
+				yaffs_DeleteDirectoryContents(obj);
+
+			T(YAFFS_TRACE_SCAN,
+				(TSTR("Deleting lost_found object %d" TENDSTR),
+				obj->objectId));
+
+			/* Need to use UnlinkObject since Delete would not
+			 * handle hardlinked objects correctly.
+			 */
+			yaffs_UnlinkObject(obj);
+		}
+	}
+
+}
+
+static void yaffs_EmptyLostAndFound(yaffs_Device *dev)
+{
+	yaffs_DeleteDirectoryContents(dev->lostNFoundDir);
 }
 
 static int yaffs_Scan(yaffs_Device *dev)
@@ -6698,7 +6899,7 @@ static void yaffs_VerifyDirectory(yaffs_Object *directory)
  *   rm dir/a:   update dir's mtime/ctime
  *   modify dir/a: don't update dir's mtimme/ctime
  */
-
+ 
 static void yaffs_UpdateParent(yaffs_Object *obj)
 {
 	if(!obj)
@@ -6707,7 +6908,9 @@ static void yaffs_UpdateParent(yaffs_Object *obj)
 	obj->dirty = 1;
 	obj->yst_mtime = obj->yst_ctime = Y_CURRENT_TIME;
 
+#if 0
 	yaffs_UpdateObjectHeader(obj,NULL,0,0,0);
+#endif
 }
 
 static void yaffs_RemoveObjectFromDirectory(yaffs_Object *obj)
@@ -6726,7 +6929,7 @@ static void yaffs_RemoveObjectFromDirectory(yaffs_Object *obj)
 
 	ylist_del_init(&obj->siblings);
 	obj->parent = NULL;
-
+	
 	yaffs_VerifyDirectory(parent);
 }
 
@@ -7413,6 +7616,9 @@ int yaffs_GutsInitialise(yaffs_Device *dev)
 				init_failed = 1;
 
 		yaffs_StripDeletedObjects(dev);
+		yaffs_FixHangingObjects(dev);
+		if (dev->emptyLostAndFound)
+			yaffs_EmptyLostAndFound(dev);
 	}
 
 	if (init_failed) {
@@ -7436,6 +7642,9 @@ int yaffs_GutsInitialise(yaffs_Device *dev)
 	yaffs_VerifyFreeChunks(dev);
 	yaffs_VerifyBlocks(dev);
 
+	/* Clean up any aborted checkpoint data */
+	if (!dev->isCheckpointed && dev->blocksInCheckpoint > 0)
+		yaffs_InvalidateCheckpoint(dev);
 
 	T(YAFFS_TRACE_TRACING,
 	  (TSTR("yaffs: yaffs_GutsInitialise() done.\n" TENDSTR)));
