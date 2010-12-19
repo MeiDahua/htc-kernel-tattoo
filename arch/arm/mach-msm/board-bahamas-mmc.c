@@ -122,7 +122,7 @@ static uint32_t bahamas_sdslot_switchvdd(struct device *dev, unsigned int vdd)
 	}
 
 	if (!sdslot_vreg_enabled) {
-		msleep(5);
+		mdelay(5);
 		vreg_enable(vreg_sdslot);
 		udelay(500);
 		config_gpio_table(sdcard_on_gpio_table,
