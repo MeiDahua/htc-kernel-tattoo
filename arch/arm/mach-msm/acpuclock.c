@@ -83,6 +83,8 @@ struct clkctl_acpu_speed {
 /* Index in acpu_freq_tbl[] for steppings. */
 	short		down;
 	short		up;
+	// For overclocking via PLL2 L val
+	short		pll2_lval;
 };
 
 /*
@@ -114,22 +116,29 @@ static struct clkctl_acpu_speed  acpu_freq_tbl[] = {
 #if defined(CONFIG_TURBO_MODE)
 /* 7200a turbo mode, PLL0(mpll):245.76, PLL1(gpll):960, PLL2(bpll0):1056 */
 static struct clkctl_acpu_speed  acpu_freq_tbl[] = {
-	{ 19200, ACPU_PLL_TCXO, 0, 0, 19200, 0, VDD_0, 30720, 0, 0, 4 },
-	{ 122880, ACPU_PLL_0, 4, 1, 61440, 1, VDD_3, 61440, 0, 0, 4 },
-#if 1 /* QCT fixup */
-	{ 160000, ACPU_PLL_1, 1, 5, 53333, 2, VDD_3, 61440, 0, 0, 6 },
-#else /* Google */
-	{ 160000, ACPU_PLL_1, 1, 5, 64000, 1, VDD_3, 61440, 0, 0, 6 },
-#endif
-	{ 176000, ACPU_PLL_2, 2, 5, 88000, 1, VDD_3, 61440, 0, 0, 5 },
-	{ 245760, ACPU_PLL_0, 4, 0, 81920, 2, VDD_4, 61440, 0, 0, 5 },
-	{ 352000, ACPU_PLL_2, 2, 2, 88000, 3, VDD_5, 128000, 0, 3, 7 },
-#if 1 /* QCT fixup */
-	{ 480000, ACPU_PLL_1, 1, 1, 120000, 3, VDD_6, 120000, 0, 2, -1 },
-#else /* Google */
-	{ 480000, ACPU_PLL_1, 1, 1, 128000, 2, VDD_6, 160000, 0, 2, -1 },
-#endif
-	{ 528000, ACPU_PLL_2, 2, 1, 132000, 3, VDD_7, 160000, 0, 5, -1 },
+/* 0*/  { 19200, ACPU_PLL_TCXO, 0, 0, 19200, 0, VDD_0, 30720, 0, 0, 3 },
+/* 1*/  { 122880, ACPU_PLL_0, 4, 1, 61440, 1, VDD_3, 61440, 0, 0, 4 },
+/* 2*/  { 160000, ACPU_PLL_1, 1, 5, 53333, 2, VDD_3, 61440, 0, 0, 6 },
+/* 3*/  { 176000, ACPU_PLL_2, 2, 5, 88000, 1, VDD_3, 61440, 0, 0, 6 },
+/* 4*/  { 245760, ACPU_PLL_0, 4, 0, 81920, 2, VDD_4, 61440, 0, 0, 6 },
+/* 5*/  { 264000, ACPU_PLL_2, 2, 3, 88000, 2, VDD_3, 128000, 0, 0, 8 },
+/* 6*/  { 352000, ACPU_PLL_2, 2, 2, 88000, 3, VDD_5, 128000, 0, 3, 13 },
+/* 7*/  { 480000, ACPU_PLL_1, 1, 1, 120000, 3, VDD_6, 120000, 0, 4, 20 },
+/* 8*/  { 518400, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 5, -1, 0x1b },
+/* 9*/  { 528000, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 5, -1 },
+/*10*/  { 537600, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 6, -1, 0x1c },
+/*11*/  { 556800, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 6, -1, 0x1d },
+/*12*/  { 576000, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 6, -1, 0x1e },
+/*13*/  { 595200, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 6, -1, 0x1f },
+/*14*/  { 614400, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x20 },
+/*15*/  { 633600, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x21 },
+/*16*/  { 652800, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x22 },
+/*17*/  { 672000, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x23 },
+/*18*/  { 691200, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x24 },
+/*19*/  { 710400, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x25 },
+/*20*/  { 729600, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x26 },
+/*21*/  { 748800, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x27 },
+/*22*/  { 768000, ACPU_PLL_2, 2, 1, 132000, 3, VDD_6, 160000, 0, 8, -1, 0x28 },
 	{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 };
 #else
@@ -152,13 +161,22 @@ static struct clkctl_acpu_speed  acpu_freq_tbl[] = {
     defined(CONFIG_MSM_CPU_FREQ_MSM7K)
 #if defined(CONFIG_TURBO_MODE)
 static struct cpufreq_frequency_table freq_table[] = {
-	{ 0, 19200 },
-	{ 1, 122880 },
-	{ 2, 160000 },
-	{ 3, 245760 },
-	{ 4, 480000 },
-	{ 5, 528000 },
-	{ 6, CPUFREQ_TABLE_END },
+	{ 0,  19200 },
+	{ 1, 176000 },
+	{ 2, 264000 },
+	{ 3, 352000 },
+	{ 4, 518400 },
+	{ 5, 576000 },
+	{ 6, 614400 },
+	{ 7, 633600 },
+	{ 8, 652800 },
+	{ 9, 672000 },
+	{10, 691200 },
+	{11, 710400 },
+	{12, 729600 },
+	{13, 748800 },
+	{14, 768000 },
+	{15, CPUFREQ_TABLE_END },
 };
 #else
 static struct cpufreq_frequency_table freq_table[] = {
@@ -248,10 +266,21 @@ static int acpuclk_set_vdd_level(int vdd)
 
 /* Set proper dividers for the given clock speed. */
 static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s) {
-	uint32_t reg_clkctl, reg_clksel, clk_div;
+	uint32_t reg_clkctl, reg_clksel, clk_div, a11_div;
 
 	/* AHB_CLK_DIV */
 	clk_div = (readl(A11S_CLK_SEL_ADDR) >> 1) & 0x03;
+
+	/* OC BEGIN */
+	a11_div=hunt_s->a11clk_src_div;
+
+	if (hunt_s->a11clk_khz >= 518400 && hunt_s->pll2_lval > 0) {
+		a11_div = 0;
+		writel(hunt_s->a11clk_khz/19200, MSM_CLK_CTL_BASE+0x33c);
+		udelay(50);
+	}
+	/* OC END */
+
 	/*
 	 * If the new clock divider is higher than the previous, then
 	 * program the divider before switching the clock
@@ -274,7 +303,7 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s) {
 		/* Program clock divider */
 		reg_clkctl = readl(A11S_CLK_CNTL_ADDR);
 		reg_clkctl &= ~0xf;
-		reg_clkctl |= hunt_s->a11clk_src_div;
+		reg_clkctl |= a11_div;
 		writel(reg_clkctl, A11S_CLK_CNTL_ADDR);
 
 		/* Program clock source selection */
@@ -293,7 +322,7 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s) {
 		/* Program clock divider */
 		reg_clkctl = readl(A11S_CLK_CNTL_ADDR);
 		reg_clkctl &= ~(0xf << 8);
-		reg_clkctl |= (hunt_s->a11clk_src_div << 8);
+		reg_clkctl |= (a11_div << 8);
 		writel(reg_clkctl, A11S_CLK_CNTL_ADDR);
 
 		/* Program clock source selection */
