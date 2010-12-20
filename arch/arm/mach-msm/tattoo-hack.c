@@ -25,6 +25,6 @@ void __exit unprotect_nand_exit(void)
 
 module_init(unprotect_nand);
 module_exit(unprotect_nand_exit);
-MODULE_DESCRIPTION("Tattoo hack - enable write protect");
+MODULE_DESCRIPTION("Tattoo hack - disable write protect");
 MODULE_AUTHOR("bool_s");
 MODULE_LICENSE("GPL");
