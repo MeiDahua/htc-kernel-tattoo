@@ -1012,16 +1012,14 @@ static void __init bahamas_init(void)
 
 	/* touchscreen must be powered before we enable i2c pullup */
 #if 0 /* TODO: do some equivalent operations here */
-	//udelay(50);
-	usleep(50);
+	udelay(50);
 	trout_gpio_write(NULL, TROUT_GPIO_I2C_PULL, 1);
 #endif
 
 	/* put the AF VCM in powerdown mode to avoid noise */
 #if 0
 	trout_gpio_write(NULL, TROUT_GPIO_VCM_PWDN, 1);
-	//mdelay(100);
-	msleep(100);
+	mdelay(100);
 	trout_i2c_sysdev_resume(NULL);
 #endif
 

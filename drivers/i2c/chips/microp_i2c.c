@@ -514,8 +514,7 @@ static void microp_i2c_reset_microp(struct i2c_client *client)
 	pdata = client->dev.platform_data;
 
 	gpio_set_value(pdata->gpio_reset, 0);
-	//udelay(120);
-	usleep(120);
+	udelay(120);
 	gpio_set_value(pdata->gpio_reset, 1);
 	mdelay(5);
 }
@@ -532,11 +531,9 @@ static int microp_i2c_version_check(struct i2c_client *client, uint8_t *data)
 		data[0], data[1]);
 	data[0] = 1;
 	i2c_write_block(client, 0x02, data, 1);
-	//mdelay(250);
-	msleep(250);
+	mdelay(250);
 	microp_i2c_reset_microp(client);
-	//mdelay(20);
-	msleep(250);
+	mdelay(20);
 
 	ret = i2c_read_block(client, MICROP_I2C_CMD_VERSION, data, 2);
 	if (data[0] != 0x02 || ret < 0)
@@ -849,8 +846,7 @@ int get_adc_value(uint8_t pin, int *value)
 	mutex_lock(&cdata->microp_i2c_mutex);
 	if(i2c_write_block(client, MICROP_I2C_CMD_ADC_READ_DATA_CMD, buffer, 1) >=0) {
 		for(loop_i = 0; loop_i < 10; loop_i++)	{
-			//udelay(200);
-			usleep(200);
+			udelay(200);
 			memset(buffer, 0x0, sizeof(buffer));
 			if(i2c_read_block(client, MICROP_I2C_CMD_ADC_READ_DATA, buffer, 3) < 0) {
 				ret = -EIO;
