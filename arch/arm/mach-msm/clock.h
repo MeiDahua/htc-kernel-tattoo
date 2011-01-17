@@ -88,5 +88,8 @@ struct clk {
 
 extern struct clk msm_clocks[];
 
+void clk_enter_sleep(int from_idle);
+void clk_exit_sleep(void);
+
 #endif
 
