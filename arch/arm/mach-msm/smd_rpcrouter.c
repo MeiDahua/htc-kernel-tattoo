@@ -367,8 +367,6 @@ static struct rr_remote_endpoint *rpcrouter_lookup_remote_endpoint(uint32_t cid)
 	list_for_each_entry(ept, &remote_endpoints, list) {
 		if (ept->cid == cid) {
 			spin_unlock_irqrestore(&remote_endpoints_lock, flags);
-			D("%s: Found r_ept %p for %d:%08x\n", __func__, ept,
-			   pid, cid);
 			return ept;
 		}
 	}
@@ -380,7 +378,7 @@ static int process_control_msg(union rr_control_msg *msg, int len)
 {
 	union rr_control_msg ctl;
 	struct rr_server *server;
-	struct rr_remote_endpoint *r_ept = NULL;
+	struct rr_remote_endpoint *r_ept;
 	int rc = 0;
 	unsigned long flags;
 
@@ -426,20 +424,12 @@ static int process_control_msg(union rr_control_msg *msg, int len)
 	case RPCROUTER_CTRL_CMD_RESUME_TX:
 		RR("o RESUME_TX id=%d:%08x\n", msg->cli.pid, msg->cli.cid);
 
-		do {
-			if (r_ept)
-				pr_err("%s: Oops - Wrong r_ept %p\n",
-					__func__, r_ept);
-			r_ept = rpcrouter_lookup_remote_endpoint(msg->cli.pid,
-							msg->cli.cid);
-
-			if (!r_ept) {
-				printk(KERN_ERR "rpcrouter: Unable to resume"
-						" client\n");
-				return rc;
-			}
-		} while ((r_ept->pid != msg->cli.pid) ||
-			 (r_ept->cid != msg->cli.cid));
+		r_ept = rpcrouter_lookup_remote_endpoint(msg->cli.cid);
+		if (!r_ept) {
+			printk(KERN_ERR
+			       "rpcrouter: Unable to resume client\n");
+			break;
+		}
 		spin_lock_irqsave(&r_ept->quota_lock, flags);
 		r_ept->tx_quota_cntr = 0;
 		spin_unlock_irqrestore(&r_ept->quota_lock, flags);
