@@ -18,10 +18,12 @@
 #include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/i2c.h>
+#include <linux/i2c-msm.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
 #include <linux/io.h>
+#include <linux/wakelock.h>
 #include <mach/system.h>
 
 #define DEBUG 0
@@ -73,6 +75,9 @@ struct msm_i2c_dev {
 	bool                need_flush;
 	int                 flush_cnt;
 	void                *complete;
+	struct wake_lock    wakelock;
+	int                 clk_drv_str;
+	int                 dat_drv_str;
 };
 
 #if DEBUG
@@ -217,7 +222,7 @@ static void msm_i2c_interrupt_locked(struct msm_i2c_dev *dev)
 	return;
 
 out_err:
-	dev_err(dev->dev, "error, status %x\n", status);
+	dev_err(dev->dev, "error, status %x (%02X)\n", status, dev->msg->addr);
 	dev->ret = -EIO;
 out_complete:
 	complete(dev->complete);
@@ -236,7 +241,7 @@ msm_i2c_interrupt(int irq, void *devid)
 }
 
 static int
-msm_i2c_poll_notbusy(struct msm_i2c_dev *dev, uint16_t addr, int warn)
+msm_i2c_poll_notbusy(struct msm_i2c_dev *dev, int warn)
 {
 	uint32_t retries = 0;
 
@@ -246,8 +251,7 @@ msm_i2c_poll_notbusy(struct msm_i2c_dev *dev, uint16_t addr, int warn)
 		if (!(status & I2C_STATUS_BUS_ACTIVE)) {
 			if (retries && warn)
 				dev_warn(dev->dev,
-					"Warning bus was busy (%d) (%02X)\n",
-					retries, addr);
+					"Warning bus was busy (%d)\n", retries);
 			return 0;
 		}
 		if (retries++ > 100)
@@ -268,7 +272,7 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev)
 	if (!(status & (I2C_STATUS_BUS_ACTIVE | I2C_STATUS_WR_BUFFER_FULL)))
 		return 0;
 
-	msm_set_i2c_mux(true, &gpio_clk, &gpio_dat);
+	msm_set_i2c_mux(true, &gpio_clk, &gpio_dat, 0, 0);
 
 	if (status & I2C_STATUS_RD_BUFFER_FULL) {
 		dev_warn(dev->dev, "Read buffer full, status %x, intf %x\n",
@@ -282,6 +286,9 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev)
 		writel(I2C_WRITE_DATA_LAST_BYTE | 0xff,
 		       dev->base + I2C_WRITE_DATA);
 	}
+
+	dev_warn(dev->dev, "i2c_scl: %d, i2c_sda: %d\n",
+		 gpio_get_value(gpio_clk), gpio_get_value(gpio_dat));
 
 	for (i = 0; i < 9; i++) {
 		if (gpio_get_value(gpio_dat) && gpio_clk_status)
@@ -300,7 +307,9 @@ msm_i2c_recover_bus_busy(struct msm_i2c_dev *dev)
 		gpio_direction_input(gpio_dat);
 		udelay(5);
 	}
-	msm_set_i2c_mux(false, NULL, NULL);
+	msm_set_i2c_mux(false, NULL, NULL,
+		dev->clk_drv_str, dev->dat_drv_str);
+
 	udelay(10);
 
 	status = readl(dev->base + I2C_STATUS);
@@ -326,13 +335,17 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	long timeout;
 	unsigned long flags;
 
-	ret = msm_i2c_poll_notbusy(dev, msgs->addr, 1);
+	wake_lock(&dev->wakelock);
+	clk_enable(dev->clk);
+	enable_irq(dev->irq);
+
+	ret = msm_i2c_poll_notbusy(dev, 1);
 	if (ret) {
 		dev_err(dev->dev, "Still busy in starting xfer(%02X)\n",
 			msgs->addr);
 		ret = msm_i2c_recover_bus_busy(dev);
 		if (ret)
-			return ret;
+			goto err;
 	}
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -358,11 +371,9 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	 */
 
 	timeout = wait_for_completion_timeout(&complete, HZ);
-	/* Read may not have stopped in time */
-	if (msm_i2c_poll_notbusy(dev, msgs->addr, 0))
+	if (msm_i2c_poll_notbusy(dev, 0))  /* Read may not have stopped in time */
 		dev_err(dev->dev, "Still busy after xfer completion (%02X)\n",
 			msgs->addr);
-
 	spin_lock_irqsave(&dev->lock, flags);
 	if (dev->flush_cnt) {
 		dev_warn(dev->dev, "%d unrequested bytes read\n",
@@ -384,11 +395,14 @@ msm_i2c_xfer(struct i2c_adapter *adap, struct i2c_msg msgs[], int num)
 	}
 
 	if (ret < 0) {
-		dev_err(dev->dev,
-			"Error during data xfer (%d)(%02X)\n",
+		dev_err(dev->dev, "Error during data xfer (%d) (%02X)\n",
 			ret, msgs->addr);
 		msm_i2c_recover_bus_busy(dev);
 	}
+err:
+	disable_irq(dev->irq);
+	clk_disable(dev->clk);
+	wake_unlock(&dev->wakelock);
 	return ret;
 }
 
@@ -408,12 +422,12 @@ msm_i2c_probe(struct platform_device *pdev)
 {
 	struct msm_i2c_dev	*dev;
 	struct resource		*mem, *irq, *ioarea;
+	struct msm_i2c_device_platform_data *pdata = pdev->dev.platform_data;
 	int ret;
 	int fs_div;
 	int hs_div;
-	int i2c_clk;
+	int i2c_clk, i2c_clock;
 	int clk_ctl;
-	int target_clk;
 	struct clk *clk;
 
 	printk(KERN_INFO "msm_i2c_probe\n");
@@ -459,7 +473,24 @@ msm_i2c_probe(struct platform_device *pdev)
 	}
 
 	spin_lock_init(&dev->lock);
+	wake_lock_init(&dev->wakelock, WAKE_LOCK_SUSPEND, "i2c");
 	platform_set_drvdata(pdev, dev);
+
+	if (pdata) {
+		dev->clk_drv_str = pdata->clock_strength;
+		dev->dat_drv_str = pdata->data_strength;
+		if (pdata->i2c_clock < 100000 || pdata->i2c_clock > 400000)
+			i2c_clock = 100000;
+		else
+			i2c_clock = pdata->i2c_clock;
+	} else {
+		dev->clk_drv_str = 0;
+		dev->dat_drv_str = 0;
+		i2c_clock = 100000;
+	}
+
+	msm_set_i2c_mux(false, NULL, NULL,
+		dev->clk_drv_str, dev->dat_drv_str);
 
 	clk_enable(clk);
 
@@ -467,14 +498,13 @@ msm_i2c_probe(struct platform_device *pdev)
 	/* I2C_FS_CLK = I2C_CLK/(2*(FS_DIVIDER_VALUE+3) */
 	/* FS_DIVIDER_VALUE = ((I2C_CLK / I2C_FS_CLK) / 2) - 3 */
 	i2c_clk = 19200000; /* input clock */
-	target_clk = 100000;
-	/* target_clk = 200000; */
-	fs_div = ((i2c_clk / target_clk) / 2) - 3;
+	fs_div = ((i2c_clk / i2c_clock) / 2) - 3;
 	hs_div = 3;
 	clk_ctl = ((hs_div & 0x7) << 8) | (fs_div & 0xff);
 	writel(clk_ctl, dev->base + I2C_CLK_CTL);
 	printk(KERN_INFO "msm_i2c_probe: clk_ctl %x, %d Hz\n",
 	       clk_ctl, i2c_clk / (2 * ((clk_ctl & 0xff) + 3)));
+	clk_disable(clk);
 
 	i2c_set_adapdata(&dev->adapter, dev);
 	dev->adapter.algo = &msm_i2c_algo;
@@ -495,13 +525,13 @@ msm_i2c_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "request_irq failed\n");
 		goto err_request_irq_failed;
 	}
+	disable_irq(dev->irq);
 	return 0;
 
 /*	free_irq(dev->irq, dev); */
 err_request_irq_failed:
 	i2c_del_adapter(&dev->adapter);
 err_i2c_add_adapter_failed:
-	clk_disable(clk);
 	iounmap(dev->base);
 err_ioremap_failed:
 	kfree(dev);
@@ -519,9 +549,10 @@ msm_i2c_remove(struct platform_device *pdev)
 	struct resource		*mem;
 
 	platform_set_drvdata(pdev, NULL);
+	enable_irq(dev->irq);
 	free_irq(dev->irq, dev);
 	i2c_del_adapter(&dev->adapter);
-	clk_disable(dev->clk);
+	wake_lock_destroy(&dev->wakelock);
 	clk_put(dev->clk);
 	iounmap(dev->base);
 	kfree(dev);
@@ -530,27 +561,9 @@ msm_i2c_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int msm_i2c_suspend(struct platform_device *pdev, pm_message_t state)
-{
-	struct msm_i2c_dev *dev = platform_get_drvdata(pdev);
-	if (dev)
-		clk_disable(dev->clk);
-	return 0;
-}
-
-static int msm_i2c_resume(struct platform_device *pdev)
-{
-	struct msm_i2c_dev *dev = platform_get_drvdata(pdev);
-	if (dev)
-		clk_enable(dev->clk);
-	return 0;
-}
-
 static struct platform_driver msm_i2c_driver = {
 	.probe		= msm_i2c_probe,
 	.remove		= msm_i2c_remove,
-	.suspend	= msm_i2c_suspend,
-	.resume		= msm_i2c_resume,
 	.driver		= {
 		.name	= "msm_i2c",
 		.owner	= THIS_MODULE,

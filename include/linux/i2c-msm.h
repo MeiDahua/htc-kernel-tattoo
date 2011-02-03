@@ -1,6 +1,7 @@
-/* arch/arm/mach-msm/include/mach/system.h
+/*
+ * include/linux/i2c-msm.h - platform data structure for i2c controller
  *
- * Copyright (C) 2007 Google, Inc.
+ * Copyright (C) 2009 HTC.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -13,19 +14,13 @@
  *
  */
 
-#include <mach/hardware.h>
+#ifndef _I2C_MSM_H
+#define _I2C_MSM_H
 
-void arch_idle(void);
+struct msm_i2c_device_platform_data {
+	int i2c_clock;
+	int clock_strength;
+	int data_strength;
+};
 
-static inline void arch_reset(char mode)
-{
-	for (;;) ;  /* depends on IPC w/ other core */
-}
-
-/* low level hardware reset hook -- for example, hitting the
- * PSHOLD line on the PMIC to hard reset the system
- */
-extern void (*msm_hw_reset_hook)(void);
-
-void msm_set_i2c_mux(bool gpio, int *gpio_clk, int *gpio_dat, int clk_str, int dat_str);
-
+#endif /* _I2C_MSM_H */
