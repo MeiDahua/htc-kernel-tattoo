@@ -264,7 +264,8 @@ static int snd_open(struct inode *inode, struct file *file)
 	mutex_lock(&snd->lock);
 	if (snd->inited == 0) {
 		snd->ept = create_rpc_connect(RPC_SND_PROG, RPC_SND_VERS,
-					MSM_RPC_UNINTERRUPTIBLE);
+					MSM_RPC_UNINTERRUPTIBLE |
+					MSM_RPC_ENABLE_RECEIVE);
 		if (IS_ERR(snd->ept)) {
 			rc = PTR_ERR(snd->ept);
 			snd->ept = NULL;

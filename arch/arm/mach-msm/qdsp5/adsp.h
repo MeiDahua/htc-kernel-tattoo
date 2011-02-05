@@ -121,6 +121,8 @@ struct adsp_info {
 #define RPC_ADSP_RTOS_MTOA_NULL_PROC 0
 #define RPC_ADSP_RTOS_APP_TO_MODEM_PROC 2
 #define RPC_ADSP_RTOS_MODEM_TO_APP_PROC 2
+#define RPC_ADSP_RTOS_MODEM_TO_APP_EVENT_INFO_PROC 3
+#define RPC_ADSP_RTOS_MODEM_TO_APP_INIT_INFO_PROC 4
 
 enum rpc_adsp_rtos_proc_type {
 	RPC_ADSP_RTOS_PROC_NONE = 0,
@@ -185,12 +187,24 @@ struct adsp_rtos_mp_mtoa_type {
 };
 
 /* ADSP RTOS MP Communications - Modem to APP's Init Info  */
+#if defined(CONFIG_ARCH_MSM7227)
+#define IMG_MAX         2
+#define ENTRIES_MAX     36
+#define MODULES_MAX     64
+#else
 #define IMG_MAX         8
-#define	ENTRIES_MAX     64
+#define ENTRIES_MAX     64
+#endif
 
 struct queue_to_offset_type {
 	uint32_t	queue;
 	uint32_t	offset;
+};
+
+struct mod_to_queue_offsets {
+	uint32_t        module;
+	uint32_t        q_type;
+	uint32_t        q_max_len;
 };
 
 struct adsp_rtos_mp_mtoa_init_info_type {
@@ -202,17 +216,26 @@ struct adsp_rtos_mp_mtoa_init_info_type {
 	uint32_t	task_to_module_tbl[IMG_MAX][ENTRIES_MAX];
 
 	uint32_t	module_table_size;
+#if defined(CONFIG_ARCH_MSM7227)
+	uint32_t	module_entries[MODULES_MAX];
+	uint32_t	mod_to_q_entries;
+	struct mod_to_queue_offsets	mod_to_q_tbl[ENTRIES_MAX];
+#else
 	uint32_t	module_entries[ENTRIES_MAX];
+#endif
 	/*
 	 * queue_offsets[] is to store only queue_offsets
 	 */
-	uint32_t        queue_offsets[IMG_MAX][ENTRIES_MAX];
+	uint32_t	queue_offsets[IMG_MAX][ENTRIES_MAX];
 };
 
 struct adsp_rtos_mp_mtoa_s_type {
 	struct adsp_rtos_mp_mtoa_header_type mp_mtoa_header;
 
+#if defined(CONFIG_ARCH_MSM7227)
+#else
 	uint32_t desc_field;
+#endif
 	union {
 		struct adsp_rtos_mp_mtoa_init_info_type mp_mtoa_init_packet;
 		struct adsp_rtos_mp_mtoa_type mp_mtoa_packet;
@@ -261,37 +284,6 @@ struct msm_adsp_module {
 
 extern void msm_adsp_publish_cdevs(struct msm_adsp_module *, unsigned);
 extern int adsp_init_info(struct adsp_info *info);
-
-/* Command Queue Indexes */
-#define QDSP_lpmCommandQueue              0
-#define QDSP_mpuAfeQueue                  1
-#define QDSP_mpuGraphicsCmdQueue          2
-#define QDSP_mpuModmathCmdQueue           3
-#define QDSP_mpuVDecCmdQueue              4
-#define QDSP_mpuVDecPktQueue              5
-#define QDSP_mpuVEncCmdQueue              6
-#define QDSP_rxMpuDecCmdQueue             7
-#define QDSP_rxMpuDecPktQueue             8
-#define QDSP_txMpuEncQueue                9
-#define QDSP_uPAudPPCmd1Queue             10
-#define QDSP_uPAudPPCmd2Queue             11
-#define QDSP_uPAudPPCmd3Queue             12
-#define QDSP_uPAudPlay0BitStreamCtrlQueue 13
-#define QDSP_uPAudPlay1BitStreamCtrlQueue 14
-#define QDSP_uPAudPlay2BitStreamCtrlQueue 15
-#define QDSP_uPAudPlay3BitStreamCtrlQueue 16
-#define QDSP_uPAudPlay4BitStreamCtrlQueue 17
-#define QDSP_uPAudPreProcCmdQueue         18
-#define QDSP_uPAudRecBitStreamQueue       19
-#define QDSP_uPAudRecCmdQueue             20
-#define QDSP_uPDiagQueue                  21
-#define QDSP_uPJpegActionCmdQueue         22
-#define QDSP_uPJpegCfgCmdQueue            23
-#define QDSP_uPVocProcQueue               24
-#define QDSP_vfeCommandQueue              25
-#define QDSP_vfeCommandScaleQueue         26
-#define QDSP_vfeCommandTableQueue         27
-#define QDSP_MAX_NUM_QUEUES               28
 
 /* Value to indicate that a queue is not defined for a particular image */
 #define QDSP_RTOS_NO_QUEUE  0xfffffffe

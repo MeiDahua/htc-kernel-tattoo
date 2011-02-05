@@ -69,13 +69,6 @@ typedef struct {
 	unsigned int dsp_write_phy_addr;
 } __attribute__((packed)) audplay_cmd_bitstream_data_avail;
 
-typedef struct {
-  /* command id */
-  unsigned int cmd_id;
-  unsigned int unused;
-  unsigned int dual_mono_mode;
-} __attribute__((packed)) audplay_cmd_channel_info;
-
 #define AUDPLAY_CMD_HPCM_BUF_CFG 0x0003
 #define AUDPLAY_CMD_HPCM_BUF_CFG_LEN \
 	sizeof(struct audplay_cmd_hpcm_buf_cfg)
@@ -102,4 +95,11 @@ struct audplay_cmd_buffer_refresh {
 	unsigned int buf1_address;
 	unsigned int buf1_length;
 } __attribute__((packed));
+
+typedef struct {
+	/* command id */
+	unsigned int cmd_id;
+	unsigned int unused;
+	unsigned int dual_mono_mode;
+} __attribute__((packed)) audplay_cmd_channel_info;
 #endif /* QDSP5AUDPLAYCMD_H */

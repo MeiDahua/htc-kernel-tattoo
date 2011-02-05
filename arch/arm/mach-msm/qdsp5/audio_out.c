@@ -42,6 +42,19 @@
 
 #include "evlog.h"
 
+#include <linux/rtc.h>
+
+#define AUDIO_LOG(x...) do { \
+struct timespec ts; \
+struct rtc_time tm; \
+getnstimeofday(&ts); \
+rtc_time_to_tm(ts.tv_sec, &tm); \
+printk(KERN_INFO "AUDIO: " x); \
+printk(" at %lld (%d-%02d-%02d %02d:%02d:%02d.%09lu UTC)\n", \
+ktime_to_ns(ktime_get()), tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, \
+tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec); \
+} while (0)
+
 #define LOG_AUDIO_EVENTS 1
 #define LOG_AUDIO_FAULTS 0
 
@@ -148,6 +161,7 @@ struct audio {
 static void audio_prevent_sleep(struct audio *audio)
 {
 	printk(KERN_INFO "++++++++++++++++++++++++++++++\n");
+	AUDIO_LOG("AUDIO PLAYBACK START");
 	wake_lock(&audio->wakelock);
 	wake_lock(&audio->idlelock);
 }
@@ -156,6 +170,7 @@ static void audio_allow_sleep(struct audio *audio)
 {
 	wake_unlock(&audio->wakelock);
 	wake_unlock(&audio->idlelock);
+	AUDIO_LOG("AUDIO PLAYBACK OFF");
 	printk(KERN_INFO "------------------------------\n");
 }
 
@@ -500,9 +515,11 @@ static ssize_t audio_write(struct file *file, const char __user *buf,
 	/* just for this write, set us real-time */
 	if (!task_has_rt_policy(current)) {
 		struct cred *new = prepare_creds();
-		cap_raise(new->cap_effective, CAP_SYS_NICE);
-		commit_creds(new);
-		sched_setscheduler(current, SCHED_RR, &s);
+		if (new != NULL) {
+		    cap_raise(new->cap_effective, CAP_SYS_NICE);
+		    commit_creds(new);
+		    sched_setscheduler(current, SCHED_RR, &s);
+		}
 	}
 
 	mutex_lock(&audio->write_lock);
@@ -552,9 +569,11 @@ static ssize_t audio_write(struct file *file, const char __user *buf,
 		sched_setscheduler(current, old_policy, &v);
 		if (likely(!cap_nice)) {
 			struct cred *new = prepare_creds();
-			cap_lower(new->cap_effective, CAP_SYS_NICE);
-			commit_creds(new);
-			sched_setscheduler(current, SCHED_RR, &s);
+			if (new != NULL) {
+			    cap_lower(new->cap_effective, CAP_SYS_NICE);
+			    commit_creds(new);
+			    sched_setscheduler(current, SCHED_RR, &s);
+			}
 		}
 	}
 

@@ -57,6 +57,7 @@ struct voc_ctxt {
 
 	spinlock_t dsp_lock;
 	wait_queue_head_t wait;
+	wait_queue_head_t last_write_wait;
 
 	uint32_t head;
 	uint32_t tail;
@@ -64,6 +65,8 @@ struct voc_ctxt {
 	int opened;
 	int intr;
 	int client;
+	int final_input;
+	uint8_t *s_ptr;
 };
 
 struct voc_rpc {
@@ -135,17 +138,24 @@ void put_vocpcm_data(uint32_t *pcm_data, uint32_t cb_id, uint32_t len,
 			msg.buf[i] = cpu_to_be32(*(data+i));
 
 		if (++frame->index >= FRAME_NUM) {
+			frame->index = 0;
 			ctxt->tail = (ctxt->tail + 1) & (BUFFER_NUM - 1);
 			if (ctxt->head == ctxt->tail) {
 				ctxt->head = (ctxt->head + 1) &
 						(BUFFER_NUM - 1);
-				pr_err(" when head=tail, head= %d, tail=%d \n",
+				if (!ctxt->final_input) {
+					pr_err(" when head=tail,"
+						" head= %d, tail=%d \n",
 						ctxt->head, ctxt->tail);
+				} else {
+					ctxt->count--;
+				}
 			} else
 				ctxt->count--;
 
 			spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
 			wake_up(&ctxt->wait);
+			wake_up(&ctxt->last_write_wait);
 		} else
 			spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
 	} else {
@@ -177,12 +187,17 @@ void get_vocpcm_data(const uint32_t *pcm_data, uint32_t cb_id, uint32_t len)
 	spin_lock_irqsave(&ctxt->dsp_lock, flags);
 	data_index = frame->index * FRAME_SIZE;
 	data = &frame->data[data_index];
+
 	for (i; i < FRAME_SIZE; i++)
 		*(data+i) = be32_to_cpu(*(pcm_data+i));
 	if (++frame->index == FRAME_NUM) {
+		frame->index = 0;
 		ctxt->head = (ctxt->head + 1) & (BUFFER_NUM - 1);
-		if (ctxt->head == ctxt->tail)
+		if (ctxt->head == ctxt->tail) {
 			ctxt->tail = (ctxt->tail + 1) & (BUFFER_NUM - 1);
+			pr_err(" when head=tail, head= %d, tail=%d \n",
+						ctxt->head, ctxt->tail);
+		}
 		else
 			ctxt->count++;
 		spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
@@ -282,6 +297,12 @@ static int voc_unregister_client(struct voc_ctxt *ctxt)
 static long vocpcm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct voc_ctxt *ctxt = file->private_data;
+	struct buffer *frame;
+	unsigned long flags;
+	uint32_t index;
+	uint32_t data_index;
+	uint32_t len = 0;
+	uint8_t *dest;
 	int rc = 0;
 
 	mutex_lock(&ctxt->lock);
@@ -291,6 +312,33 @@ static long vocpcm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		break;
 
 	case VOCPCM_UNREGISTER_CLIENT:
+		if (ctxt->intr % 2) {
+			if (ctxt->s_ptr) {
+				index = ctxt->head;
+				frame = ctxt->buf[index].data;
+				data_index = FRAME_NUM * FRAME_SIZE - 1;
+				dest = (uint8_t *)&frame->data[data_index] + 1;
+				len = dest - ctxt->s_ptr + 1;
+
+				memset(ctxt->s_ptr, 0, len);
+
+				spin_lock_irqsave(&ctxt->dsp_lock, flags);
+				frame->index = 0;
+				ctxt->head = (ctxt->head + 1) &
+						 (BUFFER_NUM - 1);
+				ctxt->count++;
+				ctxt->final_input = 1;
+				spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
+
+				rc = wait_event_interruptible_timeout(
+						ctxt->last_write_wait,
+						ctxt->count == 0,
+						5 * HZ);
+				if (rc < 0)
+					break;
+			}
+		}
+
 		if (ctxt->client)
 			rc = voc_unregister_client(ctxt);
 		else
@@ -308,7 +356,7 @@ static long vocpcm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 }
 
 static ssize_t vocpcm_read(struct file *file, char __user *buf,
-		size_t count, loff_t *pos)
+				size_t count, loff_t *pos)
 {
 	struct voc_ctxt *ctxt = file->private_data;
 	struct buffer *frame;
@@ -316,6 +364,10 @@ static ssize_t vocpcm_read(struct file *file, char __user *buf,
 	const int size = BUFFER_SIZE * 2;
 	unsigned long flags;
 	uint32_t index;
+	uint32_t data_index;
+	uint32_t len = 0;
+	uint32_t actual_len = 0;
+	uint8_t *dest;
 	int rc = 0;
 
 	if (ctxt->intr % 2) {
@@ -323,51 +375,72 @@ static ssize_t vocpcm_read(struct file *file, char __user *buf,
 	}
 
 	while (count > 0) {
-		rc = wait_event_interruptible(ctxt->wait, ctxt->count > 0);
+		rc = wait_event_interruptible_timeout(ctxt->wait,
+						 ctxt->count > 0,
+						 5 * HZ);
+		if (!rc)
+			rc = -ETIMEDOUT;
 
 		if (rc < 0)
 			break;
 
 		index = ctxt->tail;
 		frame = ctxt->buf[index].data;
-		if (count >= size) {
-			if (copy_to_user(buf, (uint8_t *)frame->data, size)) {
-				rc = -EFAULT;
-				break;
-			}
-			spin_lock_irqsave(&ctxt->dsp_lock, flags);
-			if (index != ctxt->tail) {
-				/* overrun -- data is invalid
-				    and we need to retry */
-				spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
-				continue;
-			}
+
+		if (ctxt->s_ptr == NULL)
+			ctxt->s_ptr = (uint8_t *)&frame->data;
+
+		data_index = FRAME_NUM * FRAME_SIZE - 1;
+		dest = (uint8_t *)&frame->data[data_index] + 1;
+
+		len = dest - ctxt->s_ptr + 1;
+
+		actual_len = (len > count) ? count : len;
+		if (copy_to_user(buf, ctxt->s_ptr, actual_len)) {
+		rc = -EFAULT;
+		break;
+		}
+
+		spin_lock_irqsave(&ctxt->dsp_lock, flags);
+		if (index != ctxt->tail) {
+			/* overrun -- data is invalid
+			    and we need to retry */
+			spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
+			continue;
+		}
+
+		if (len > count) {
+			ctxt->s_ptr += count;
+		} else {
 			frame->index = 0;
 			ctxt->tail = (ctxt->tail + 1) & (BUFFER_NUM - 1);
 			ctxt->count--;
-			spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
-			count -= size;
-			buf += size;
-		} else {
-			pr_err("vocpcm: short read\n");
-			break;
+			ctxt->s_ptr = 0;
 		}
+		spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
+		buf += actual_len;
+		count -= actual_len;
 	}
 
 	if (buf > start)
 		return buf - start;
+
 	return rc;
 }
 
 static ssize_t vocpcm_write(struct file *file, const char __user *buf,
-			   size_t count, loff_t *pos)
+				   size_t count, loff_t *pos)
 {
 	struct voc_ctxt *ctxt = file->private_data;
 	struct buffer *frame;
 	const char __user *start = buf;
-	const int size = BUFFER_SIZE*2;
+	const int size = BUFFER_SIZE * 2;
 	unsigned long flags;
 	uint32_t index;
+	uint32_t data_index;
+	uint32_t len = 0;
+	uint32_t actual_len = 0;
+	uint8_t *dest;
 	int rc = 0;
 
 	if ((ctxt->intr % 2) == 0) {
@@ -375,9 +448,11 @@ static ssize_t vocpcm_write(struct file *file, const char __user *buf,
 	}
 
 	while (count > 0) {
-
-		rc = wait_event_interruptible(ctxt->wait,
-						ctxt->count < BUFFER_NUM);
+		rc = wait_event_interruptible_timeout(ctxt->wait,
+					ctxt->count < BUFFER_NUM,
+					5 * HZ);
+		if (!rc)
+			rc = -ETIMEDOUT;
 
 		if (rc < 0)
 			break;
@@ -385,22 +460,44 @@ static ssize_t vocpcm_write(struct file *file, const char __user *buf,
 		index = ctxt->head;
 		frame = ctxt->buf[index].data;
 
-		if (copy_from_user((uint8_t *)frame->data, buf, size)) {
-			rc = -EFAULT;
-			break;
+		if (ctxt->s_ptr == NULL)
+			ctxt->s_ptr = (uint8_t *)&frame->data;
+
+		data_index = FRAME_NUM * FRAME_SIZE - 1;
+		dest = (uint8_t *)&frame->data[data_index] + 1;
+
+		len = dest - ctxt->s_ptr + 1;
+
+		actual_len = (len > count) ? count : len;
+		if (copy_from_user(ctxt->s_ptr, buf, actual_len)) {
+		rc = -EFAULT;
+		break;
 		}
+
 		spin_lock_irqsave(&ctxt->dsp_lock, flags);
-		frame->index = 0;
-		ctxt->head = (ctxt->head + 1) & (BUFFER_NUM - 1);
-		ctxt->count++;
+		if (index != ctxt->head) {
+			/* overrun -- data is invalid
+			    and we need to retry */
+			spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
+			continue;
+		}
+
+		if (len > count) {
+			ctxt->s_ptr += count;
+		} else {
+			frame->index = 0;
+			ctxt->head = (ctxt->head + 1) & (BUFFER_NUM - 1);
+			ctxt->count++;
+			ctxt->s_ptr = 0;
+		}
 		spin_unlock_irqrestore(&ctxt->dsp_lock, flags);
-
-		count -= size;
-		buf += size;
-
+		buf += actual_len;
+		count -= actual_len;
 	}
+
 	if (buf > start)
 		return buf - start;
+
 	return rc;
 }
 
@@ -430,7 +527,8 @@ static int vocpcm_open(struct inode *inode, struct file *file)
 	mutex_lock(&voc_rpc->lock);
 	if (voc_rpc->inited == 0) {
 		voc_rpc->ept = create_rpc_connect(RPC_SND_PROG, RPC_SND_VERS,
-					MSM_RPC_UNINTERRUPTIBLE);
+					MSM_RPC_UNINTERRUPTIBLE |
+					MSM_RPC_ENABLE_RECEIVE);
 		if (IS_ERR(voc_rpc->ept)) {
 			rc = PTR_ERR(voc_rpc->ept);
 			voc_rpc->ept = NULL;
@@ -467,6 +565,10 @@ static int vocpcm_open(struct inode *inode, struct file *file)
 	ctxt->buf[0].index = 0;
 	ctxt->buf[1].index = 0;
 	ctxt->opened = 1;
+	ctxt->count = 0;
+	ctxt->s_ptr = 0;
+	ctxt->final_input = 0;
+
 err:
 	mutex_unlock(&ctxt->lock);
 	return rc;
@@ -518,6 +620,8 @@ void voc_ctxt_init(struct voc_ctxt *ctxt, unsigned n)
 	mutex_init(&ctxt->lock);
 	spin_lock_init(&ctxt->dsp_lock);
 	init_waitqueue_head(&ctxt->wait);
+	init_waitqueue_head(&ctxt->last_write_wait);
+
 	ctxt->intr = n;
 }
 

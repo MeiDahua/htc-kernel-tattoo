@@ -200,7 +200,7 @@ static int audpp_dsp_set_adrc(void)
 	return audpp_send_queue3(&cmd, sizeof(cmd));
 }
 
-static int audpp_dsp_set_eq(void)
+static int audpp_dsp_set_eq()
 {
 	struct audpp_state *audpp = &the_audpp_state;
 	struct audpp_cmd_cfg_object_params_eq cmd;
@@ -220,7 +220,7 @@ static int audpp_dsp_set_eq(void)
 	return audpp_send_queue3(&cmd, sizeof(cmd));
 }
 
-static int audpp_dsp_set_rx_iir(void)
+static int audpp_dsp_set_rx_iir()
 {
 	struct audpp_state *audpp = &the_audpp_state;
 	struct audpp_cmd_cfg_object_params_rx_iir cmd;
@@ -245,7 +245,7 @@ static void audpp_broadcast(struct audpp_state *audpp,
 		unsigned id, uint16_t *msg)
 {
 	unsigned n;
-	for (n = 0; n < AUDPP_CLNT_MAX_COUNT; n++) {
+	for (n = 0; n < 6; n++) {
 		if (audpp->func[n])
 			audpp->func[n](audpp->private[n], id, msg);
 	}
@@ -255,7 +255,7 @@ static void audpp_status_broadcast(struct audpp_state *audpp,
 		unsigned image_swap)
 {
 	unsigned n;
-	for (n = 0; n < AUDPP_CLNT_MAX_COUNT; n++) {
+	for (n = 0; n < 6; n++) {
 		if (audpp->mfunc[n])
 			audpp->mfunc[n](audpp->private[n], image_swap);
 	}
@@ -316,6 +316,9 @@ static void audpp_dsp_event(void *data, unsigned id, size_t len,
 			audpp_broadcast(audpp, id, msg);
 		} else
 			pr_err("audpp: invalid config msg %d\n", msg[0]);
+		break;
+	case ADSP_MESSAGE_ID:
+		pr_info("audpp: module enabled\n");
 		break;
 	}
 }

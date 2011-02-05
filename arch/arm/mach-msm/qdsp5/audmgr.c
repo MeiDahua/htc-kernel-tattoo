@@ -216,7 +216,8 @@ int audmgr_open(struct audmgr *am)
 		return 0;
 
 	am->ept = msm_rpc_connect(AUDMGR_PROG, AUDMGR_VERS,
-				  MSM_RPC_UNINTERRUPTIBLE);
+				  MSM_RPC_UNINTERRUPTIBLE |
+				  MSM_RPC_ENABLE_RECEIVE);
 	init_waitqueue_head(&am->wait);
 
 	if (IS_ERR(am->ept)) {
@@ -247,7 +248,7 @@ int audmgr_close(struct audmgr *am)
 int audmgr_enable(struct audmgr *am, struct audmgr_config *cfg)
 {
 	struct audmgr_enable_msg msg;
-	int rc, retry_count = 0;
+	int rc;
 
 	if (am->state == STATE_ENABLED)
 		return 0;
@@ -255,7 +256,6 @@ int audmgr_enable(struct audmgr *am, struct audmgr_config *cfg)
 	if (am->state == STATE_DISABLING)
 		pr_err("audmgr: state is DISABLING in enable?\n");
 
-retry:
 	am->state = STATE_ENABLING;
 
 	msg.args.set_to_one = cpu_to_be32(1);
@@ -274,18 +274,11 @@ retry:
 	if (rc < 0)
 		return rc;
 
-	rc = wait_event_timeout(am->wait, am->state != STATE_ENABLING, HZ / 4);
+	rc = wait_event_timeout(am->wait, am->state != STATE_ENABLING, 2*HZ);
 	if (rc == 0) {
-		if (retry_count < 3) {
-			audmgr_disable(am);
-			retry_count++;
-			pr_warning("audmgr_enable: retry %d\n", retry_count);
-			goto retry;
-		} else {
-			pr_err("audmgr_enable: ARM9 did not reply to RPC am->"
-				"state = %d\n", am->state);
-			BUG();
-		}
+	    pr_err("audmgr_enable: ARM9 did not reply to RPC am->"
+		    "state = %d\n", am->state);
+	    BUG();
 	}
 
 	if (am->state == STATE_ENABLED)
