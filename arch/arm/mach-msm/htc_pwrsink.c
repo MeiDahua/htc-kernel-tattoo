@@ -47,8 +47,6 @@ static uint32_t *smem_total_sink;
 int htc_pwrsink_set(pwrsink_id_type id, unsigned percent_utilized)
 {
 	unsigned long flags;
-	int i, len = 0;
-	char buf[512];
 
 	if (!smem_total_sink)
 		smem_total_sink = smem_alloc(SMEM_ID_VENDOR0, sizeof(uint32_t));
@@ -83,13 +81,6 @@ int htc_pwrsink_set(pwrsink_id_type id, unsigned percent_utilized)
 	pr_debug("htc_pwrsink: ID %d, Util %d%%, Total %lu uA %s\n",
 		 id, percent_utilized, total_sink,
 		 smem_total_sink ? "SET" : "");
-
-	if (pwrsink_debug_mask & PWRSINK_DEBUG_CURR_CHANGE) {
-		for (i = 0; i <= PWRSINK_LAST; ++i)
-			len += sprintf(buf + len, "[%d]:%d ", i,
-				sink_array[i]->percent_util);
-		printk(KERN_INFO "%dmA %s\n", *smem_total_sink, buf);
-	}
 
 	spin_unlock_irqrestore(&sink_lock, flags);
 
@@ -238,21 +229,21 @@ void htc_pwrsink_resume_late(struct early_suspend *h)
 	htc_pwrsink_set(PWRSINK_SYSTEM_LOAD, 38);
 }
 
+#ifdef CONFIG_WAKELOCK
 struct early_suspend htc_pwrsink_early_suspend = {
 	.level = EARLY_SUSPEND_LEVEL_DISABLE_FB + 1,
 	.suspend = htc_pwrsink_suspend_early,
 	.resume = htc_pwrsink_resume_late,
 };
+#endif
 
 static int __init htc_pwrsink_probe(struct platform_device *pdev)
 {
 	struct pwr_sink_platform_data *pdata = pdev->dev.platform_data;
 	int i;
 
-	if (!pdata) {
-		pr_err("%s: pdata is null\n", __func__);
+	if (!pdata)
 		return -EINVAL;
-	}
 
 	total_sink = 0;
 	for (i = 0; i < pdata->num_sinks; i++) {
@@ -261,14 +252,14 @@ static int __init htc_pwrsink_probe(struct platform_device *pdev)
 			       pdata->sinks[i].percent_util / 100);
 	}
 
-	pr_info("%s: initialized completed, total_sink=%lumA\n",
-		 __func__, total_sink / 1000);
 	initialized = 1;
 
+#ifdef CONFIG_WAKELOCK
 	if (pdata->suspend_early)
 		htc_pwrsink_early_suspend.suspend = pdata->suspend_early;
 	if (pdata->resume_late)
 		htc_pwrsink_early_suspend.resume = pdata->resume_late;
+#endif
 	register_early_suspend(&htc_pwrsink_early_suspend);
 
 	return 0;
