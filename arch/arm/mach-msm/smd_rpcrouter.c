@@ -15,7 +15,6 @@
  *
  */
 
-/* TODO: fragmentation for large writes */
 /* TODO: handle cases where smd_write() will tempfail due to full fifo */
 /* TODO: thread priority? schedule a work to bump it? */
 /* TODO: maybe make server_list_lock a mutex */
@@ -23,6 +22,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/cdev.h>
@@ -90,6 +90,7 @@ static smd_channel_t *smd_channel;
 static int initialized;
 static wait_queue_head_t newserver_wait;
 static wait_queue_head_t smd_wait;
+static int smd_wait_count; /* odd while waiting */
 
 static DEFINE_SPINLOCK(local_endpoints_lock);
 static DEFINE_SPINLOCK(remote_endpoints_lock);
@@ -101,7 +102,7 @@ static struct wake_lock rpcrouter_wake_lock;
 static int rpcrouter_need_len;
 
 static atomic_t next_xid = ATOMIC_INIT(1);
-static uint8_t next_pacmarkid;
+static atomic_t next_mid = ATOMIC_INIT(0);
 
 static void do_read_data(struct work_struct *work);
 static void do_create_pdevs(struct work_struct *work);
@@ -253,6 +254,7 @@ struct msm_rpc_endpoint *msm_rpcrouter_create_local_endpoint(dev_t dev)
 {
 	struct msm_rpc_endpoint *ept;
 	unsigned long flags;
+	int i;
 
 	ept = kmalloc(sizeof(struct msm_rpc_endpoint), GFP_KERNEL);
 	if (!ept)
@@ -260,7 +262,9 @@ struct msm_rpc_endpoint *msm_rpcrouter_create_local_endpoint(dev_t dev)
 	memset(ept, 0, sizeof(struct msm_rpc_endpoint));
 
 	/* mark no reply outstanding */
-	ept->reply_pid = 0xffffffff;
+	ept->next_rroute = 0;
+	for (i = 0; i < MAX_REPLY_ROUTE; i++)
+		ept->rroute[i].pid = 0xffffffff;
 
 	ept->cid = (uint32_t) ept;
 	ept->pid = RPCROUTER_PID_LOCAL;
@@ -281,6 +285,7 @@ struct msm_rpc_endpoint *msm_rpcrouter_create_local_endpoint(dev_t dev)
 		ept->dst_cid = srv->cid;
 		ept->dst_prog = cpu_to_be32(srv->prog);
 		ept->dst_vers = cpu_to_be32(srv->vers);
+		ept->flags |= MSM_RPC_ENABLE_RECEIVE;
 
 		D("Creating local ept %p @ %08x:%08x\n", ept, srv->prog, srv->vers);
 	} else {
@@ -427,7 +432,7 @@ static int process_control_msg(union rr_control_msg *msg, int len)
 		r_ept = rpcrouter_lookup_remote_endpoint(msg->cli.cid);
 		if (!r_ept) {
 			printk(KERN_ERR
-			       "rpcrouter: Unable to resume client\n");
+				"rpcrouter: Unable to resume client\n");
 			break;
 		}
 		spin_lock_irqsave(&r_ept->quota_lock, flags);
@@ -583,7 +588,10 @@ static int rr_read(void *data, int len)
 		spin_unlock_irqrestore(&smd_lock, flags);
 
 //		printk("rr_read: waiting (%d)\n", len);
+		smd_wait_count++;
+		wake_up(&smd_wait);
 		wait_event(smd_wait, smd_read_avail(smd_channel) >= len);
+		smd_wait_count++;
 	}
 	return 0;
 }
@@ -633,11 +641,13 @@ static void do_read_data(struct work_struct *work)
 
 	hdr.size -= sizeof(pm);
 
-	frag = rr_malloc(hdr.size + sizeof(*frag));
+	frag = rr_malloc(sizeof(*frag));
 	frag->next = NULL;
 	frag->length = hdr.size;
-	if (rr_read(frag->data, hdr.size))
+	if (rr_read(frag->data, hdr.size)) {
+		kfree(frag);
 		goto fail_io;
+	}
 
 	ept = rpcrouter_lookup_local_endpoint(hdr.dst_cid);
 	if (!ept) {
@@ -679,9 +689,15 @@ static void do_read_data(struct work_struct *work)
 
 packet_complete:
 	spin_lock_irqsave(&ept->read_q_lock, flags);
-	wake_lock(&ept->read_q_wake_lock);
-	list_add_tail(&pkt->list, &ept->read_q);
-	wake_up(&ept->wait_q);
+	if (ept->flags & MSM_RPC_ENABLE_RECEIVE) {
+		wake_lock(&ept->read_q_wake_lock);
+		list_add_tail(&pkt->list, &ept->read_q);
+		wake_up(&ept->wait_q);
+	} else {
+		pr_warning("smd_rpcrouter: Unexpected incoming data on %08x:%08x\n",
+				be32_to_cpu(ept->dst_prog),
+				be32_to_cpu(ept->dst_vers));
+	}
 	spin_unlock_irqrestore(&ept->read_q_lock, flags);
 done:
 
@@ -733,30 +749,15 @@ int msm_rpc_close(struct msm_rpc_endpoint *ept)
 }
 EXPORT_SYMBOL(msm_rpc_close);
 
-static int msm_rpc_write_pkt(
-	struct rr_header *hdr,
-	struct msm_rpc_endpoint *ept,
-	struct rr_remote_endpoint *r_ept,
-	void *buffer,
-	int count,
-	int first,
-	int last
-	)
+static int msm_rpc_write_pkt(struct msm_rpc_endpoint *ept,
+			     struct rr_remote_endpoint *r_ept,
+			     struct rr_header *hdr,
+			     uint32_t pacmark,
+			     void *buffer, int count)
 {
-	uint32_t pacmark;
-	struct rpc_request_hdr *rq = buffer;
+	DEFINE_WAIT(__wait);
 	unsigned long flags;
 	int needed;
-
-	DEFINE_WAIT(__wait);
-
-	/* Create routing header */
-	hdr->type = RPCROUTER_CTRL_CMD_DATA;
-	hdr->version = RPCROUTER_VERSION;
-	hdr->src_pid = ept->pid;
-	hdr->src_cid = ept->cid;
-	hdr->confirm_rx = 0;
-	hdr->size = count + sizeof(uint32_t);
 
 	for (;;) {
 		prepare_to_wait(&r_ept->quota_wait, &__wait,
@@ -778,15 +779,8 @@ static int msm_rpc_write_pkt(
 		return -ERESTARTSYS;
 	}
 	r_ept->tx_quota_cntr++;
-	if (r_ept->tx_quota_cntr == RPCROUTER_DEFAULT_RX_QUOTA) {
+	if (r_ept->tx_quota_cntr == RPCROUTER_DEFAULT_RX_QUOTA)
 		hdr->confirm_rx = 1;
-	}
-
-	/* bump pacmark while interrupts disabled to avoid race
-	 * probably should be atomic op instead
-	 */
-	pacmark = PACMARK(count, next_pacmarkid, first, last);
-	next_pacmarkid += last; /* a little clever */
 
 	spin_unlock_irqrestore(&r_ept->quota_lock, flags);
 
@@ -806,19 +800,18 @@ static int msm_rpc_write_pkt(
 
 	spin_unlock_irqrestore(&smd_lock, flags);
 
-	return needed;
+	return 0;
 }
 
 int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 {
 	struct rr_header hdr;
+	uint32_t pacmark;
+	uint32_t mid;
 	struct rpc_request_hdr *rq = buffer;
 	struct rr_remote_endpoint *r_ept;
-	int max_tx;
-	int tx_cnt;
-	char *tx_buf;
-	int rc;
-	int first_pkt = 1;
+	int ret;
+	int total;
 
 	/* snoop the RPC packet and enforce permissions */
 
@@ -839,8 +832,15 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 			printk(KERN_ERR "rr_write: not connected\n");
 			return -ENOTCONN;
 		}
+
+#if !defined(CONFIG_MSM_LEGACY_7X00A_AMSS)
 		if ((ept->dst_prog != rq->prog) ||
-		    (ept->dst_vers != rq->vers)) {
+			!msm_rpc_is_compatible_version(
+					be32_to_cpu(ept->dst_vers),
+					be32_to_cpu(rq->vers))) {
+#else
+		if (ept->dst_prog != rq->prog || ept->dst_vers != rq->vers) {
+#endif
 			printk(KERN_ERR
 			       "rr_write: cannot write to %08x:%d "
 			       "(bound to %08x:%d)\n",
@@ -859,23 +859,21 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 	} else {
 		/* RPC REPLY */
 		/* TODO: locking */
-		if (ept->reply_pid == 0xffffffff) {
-			printk(KERN_ERR
-			       "rr_write: rejecting unexpected reply\n");
-			return -EINVAL;
-		}
-		if (ept->reply_xid != rq->xid) {
-			printk(KERN_ERR
-			       "rr_write: rejecting packet w/ bad xid\n");
-			return -EINVAL;
-		}
+		for (ret = 0; ret < MAX_REPLY_ROUTE; ret++)
+			if (ept->rroute[ret].xid == rq->xid) {
+				if (ept->rroute[ret].pid == 0xffffffff)
+					continue;
+				hdr.dst_pid = ept->rroute[ret].pid;
+				hdr.dst_cid = ept->rroute[ret].cid;
+				/* consume this reply */
+				ept->rroute[ret].pid = 0xffffffff;
+				goto found_rroute;
+			}
 
-		hdr.dst_pid = ept->reply_pid;
-		hdr.dst_cid = ept->reply_cid;
+		printk(KERN_ERR "rr_write: rejecting packet w/ bad xid\n");
+		return -EINVAL;
 
-		/* consume this reply */
-		ept->reply_pid = 0xffffffff;
-
+found_rroute:
 		IO("REPLY on ept %p to xid=%d @ %d:%08x (%d bytes)\n",
 		   ept,
 		   be32_to_cpu(rq->xid), hdr.dst_pid, hdr.dst_cid, count);
@@ -890,37 +888,41 @@ int msm_rpc_write(struct msm_rpc_endpoint *ept, void *buffer, int count)
 		return -EHOSTUNREACH;
 	}
 
-	tx_cnt = count;
-	tx_buf = buffer;
+	/* Create routing header */
+	hdr.type = RPCROUTER_CTRL_CMD_DATA;
+	hdr.version = RPCROUTER_VERSION;
+	hdr.src_pid = ept->pid;
+	hdr.src_cid = ept->cid;
 
-	/* The modem's router can only take 500 bytes of data. The
-	   first 8 bytes it uses on the modem side for addressing,
-	   the next 4 bytes are for the pacmark header. */
-	max_tx = RPCROUTER_MSGSIZE_MAX - 8 - sizeof(uint32_t);
-	IO("Writing %d bytes, max pkt size is %d\n", tx_cnt, max_tx);
-	while (tx_cnt > 0) {
-		if (tx_cnt > max_tx) {
-			rc = msm_rpc_write_pkt(&hdr, ept, r_ept,
-					      tx_buf, max_tx, first_pkt, 0);
-			if (rc < 0)
-				return rc;
-			IO("Wrote %d bytes\n",
-			   rc);
-			tx_cnt -= max_tx;
-			tx_buf += max_tx;
-		} else {
-			rc = msm_rpc_write_pkt(&hdr, ept, r_ept,
-					      tx_buf, tx_cnt, first_pkt, 1);
-			if (rc < 0)
-				return rc;
-			IO("Wrote %d bytes\n",
-			   rc);
-			break;
-		}
-		first_pkt = 0;
+	total = count;
+
+	mid = atomic_add_return(1, &next_mid) & 0xFF;
+
+	while (count > 0) {
+		unsigned xfer;
+
+		if (count > RPCROUTER_DATASIZE_MAX)
+			xfer = RPCROUTER_DATASIZE_MAX;
+		else
+			xfer = count;
+
+		hdr.confirm_rx = 0;
+		hdr.size = xfer + sizeof(uint32_t);
+
+		/* total == count -> must be first packet 
+		 * xfer == count -> must be last packet
+		 */
+		pacmark = PACMARK(xfer, mid, (total == count), (xfer == count));
+
+		ret = msm_rpc_write_pkt(ept, r_ept, &hdr, pacmark, buffer, xfer);
+		if (ret < 0)
+			return ret;
+
+		buffer += xfer;
+		count -= xfer;
 	}
 
-	return count;
+	return total;
 }
 EXPORT_SYMBOL(msm_rpc_write);
 
@@ -998,14 +1000,17 @@ int msm_rpc_call_reply(struct msm_rpc_endpoint *ept, uint32_t proc,
 	req->vers = ept->dst_vers;
 	req->procedure = cpu_to_be32(proc);
 
+	/* Allow replys to be added to the queue */
+	ept->flags |= MSM_RPC_ENABLE_RECEIVE;
+
 	rc = msm_rpc_write(ept, req, request_size);
 	if (rc < 0)
-		return rc;
+		goto error;
 
 	for (;;) {
 		rc = msm_rpc_read(ept, (void*) &reply, -1, timeout);
 		if (rc < 0)
-			return rc;
+			goto error;
 		if (rc < (3 * sizeof(uint32_t))) {
 			rc = -EIO;
 			break;
@@ -1043,6 +1048,10 @@ int msm_rpc_call_reply(struct msm_rpc_endpoint *ept, uint32_t proc,
 		break;
 	}
 	kfree(reply);
+error:
+	ept->flags &= ~MSM_RPC_ENABLE_RECEIVE;
+	wake_unlock(&ept->read_q_wake_lock);
+
 	return rc;
 }
 EXPORT_SYMBOL(msm_rpc_call_reply);
@@ -1120,14 +1129,15 @@ int __msm_rpc_read(struct msm_rpc_endpoint *ept,
 			be32_to_cpu(rq->procedure),
 			be32_to_cpu(rq->xid));
 		/* RPC CALL */
-		if (ept->reply_pid != 0xffffffff) {
+		if (ept->rroute[ept->next_rroute].pid != 0xffffffff) {
 			printk(KERN_WARNING
 			       "rr_read: lost previous reply xid...\n");
 		}
 		/* TODO: locking? */
-		ept->reply_pid = pkt->hdr.src_pid;
-		ept->reply_cid = pkt->hdr.src_cid;
-		ept->reply_xid = rq->xid;
+		ept->rroute[ept->next_rroute].pid = pkt->hdr.src_pid;
+		ept->rroute[ept->next_rroute].cid = pkt->hdr.src_cid;
+		ept->rroute[ept->next_rroute].xid = rq->xid;
+		ept->next_rroute = (ept->next_rroute + 1) & (MAX_REPLY_ROUTE - 1);
 	}
 #if TRACE_RPC_MSG
 	else if ((rc >= (sizeof(uint32_t) * 3)) && (rq->type == 1))
@@ -1139,7 +1149,7 @@ int __msm_rpc_read(struct msm_rpc_endpoint *ept,
 	return rc;
 }
 
-#if CONFIG_MSM_AMSS_VERSION != 6220
+#if !defined(CONFIG_MSM_LEGACY_7X00A_AMSS)
 int msm_rpc_is_compatible_version(uint32_t server_version,
 				  uint32_t client_version)
 {
@@ -1185,7 +1195,7 @@ struct msm_rpc_endpoint *msm_rpc_connect(uint32_t prog, uint32_t vers, unsigned 
 	struct msm_rpc_endpoint *ept;
 	struct rr_server *server;
 
-#if CONFIG_MSM_AMSS_VERSION != 6220
+#if !defined(CONFIG_MSM_LEGACY_7X00A_AMSS)
 	if (!(vers & RPC_VERSION_MODE_MASK)) {
 		uint32_t found_vers;
 		if (msm_rpc_get_compatible_server(prog, vers, &found_vers) < 0)
@@ -1248,6 +1258,7 @@ int msm_rpc_register_server(struct msm_rpc_endpoint *ept,
 	if (rc < 0)
 		return rc;
 
+	ept->flags |= MSM_RPC_ENABLE_RECEIVE;
 	return 0;
 }
 
@@ -1260,6 +1271,9 @@ int msm_rpc_unregister_server(struct msm_rpc_endpoint *ept,
 
 	if (!server)
 		return -ENOENT;
+
+	ept->flags &= ~MSM_RPC_ENABLE_RECEIVE;
+	wake_unlock(&ept->read_q_wake_lock);
 	rpcrouter_destroy_server(server);
 	return 0;
 }
@@ -1300,12 +1314,25 @@ static int msm_rpcrouter_probe(struct platform_device *pdev)
 	return rc;
 }
 
+static int msm_rpcrouter_suspend(struct platform_device *pdev,
+					pm_message_t state)
+{
+	/* Wait until the worker thread has waited at least once so that it
+	 * gets a chance to release its wakelock.
+	 */
+	int wait_count = smd_wait_count;
+	if (!(smd_wait_count & 1))
+		wait_event(smd_wait, smd_wait_count != wait_count);
+	return 0;
+}
+
 static struct platform_driver msm_smd_channel2_driver = {
 	.probe		= msm_rpcrouter_probe,
 	.driver		= {
 			.name	= "SMD_RPCCALL",
 			.owner	= THIS_MODULE,
 	},
+	.suspend	= msm_rpcrouter_suspend,
 };
 
 static int __init rpcrouter_init(void)
