@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.29.6
-# Sat Feb 19 07:46:32 2011
+# Fri Feb 25 16:57:26 2011
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -1429,9 +1429,7 @@ CONFIG_YAFFS_DISABLE_TAGS_ECC=y
 CONFIG_YAFFS_XATTR=y
 # CONFIG_JFFS2_FS is not set
 # CONFIG_CRAMFS is not set
-CONFIG_SQUASHFS=y
-# CONFIG_SQUASHFS_EMBEDDED is not set
-CONFIG_SQUASHFS_FRAGMENT_CACHE_SIZE=3
+# CONFIG_SQUASHFS is not set
 # CONFIG_VXFS_FS is not set
 # CONFIG_MINIX_FS is not set
 # CONFIG_OMFS_FS is not set
