@@ -1,11 +1,15 @@
-/*
- * drivers/i2c/chips/bma150.c - bma150 G-sensor driver
+/* drivers/i2c/chips/bma150.c - bma150 G-sensor driver
  *
- *  Copyright (C) 2008 viral wang <viralwang@gmail.com>
+ * Copyright (C) 2008-2009 HTC Corporation.
  *
- *  This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation; version 2 of the License.
+ * This software is licensed under the terms of the GNU General Public
+ * License version 2, as published by the Free Software Foundation, and
+ * may be copied, distributed, and modified under those terms.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
  */
 
 #include <linux/i2c.h>
@@ -366,7 +370,7 @@ static int bma150_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id bma150_id[] = {
-	{ BMA150_G_SENSOR_NAME, 0 },
+	{ BMA150_I2C_NAME, 0 },
 	{ }
 };
 
@@ -375,7 +379,7 @@ static struct i2c_driver bma150_driver = {
 	.remove = bma150_remove,
 	.id_table	= bma150_id,
 	.driver = {
-		   .name = BMA150_G_SENSOR_NAME,
+		   .name = BMA150_I2C_NAME,
 		   },
 };
 
@@ -393,7 +397,6 @@ static void __exit bma150_exit(void)
 module_init(bma150_init);
 module_exit(bma150_exit);
 
-MODULE_AUTHOR("viral wang <viral_wang@htc.com>");
 MODULE_DESCRIPTION("BMA150 G-sensor driver");
 MODULE_LICENSE("GPL");
 

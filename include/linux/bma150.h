@@ -5,6 +5,8 @@
 #define BMA150_H
 
 #include <linux/ioctl.h>
+
+#define BMA150_I2C_NAME "bma150"
 #define BMA150_G_SENSOR_NAME "bma150"
 
 #define BMAIO				0xA1
@@ -71,6 +73,7 @@
 
 struct bma150_platform_data {
 	int intr;
+	int microp_new_cmd;
 };
 
 #endif

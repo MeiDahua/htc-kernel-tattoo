@@ -27,19 +27,26 @@
 #include <mach/msm_smd.h>
 #include <mach/msm_rpcrouter.h>
 #include <mach/msm_iomap.h>
+#include <asm/cacheflush.h>
 
 #include "smd_private.h"
 
 #define ACOUSTIC_IOCTL_MAGIC 'p'
 #define ACOUSTIC_ARM11_DONE	_IOW(ACOUSTIC_IOCTL_MAGIC, 22, unsigned int)
 #define ACOUSTIC_ALLOC_SMEM	_IOW(ACOUSTIC_IOCTL_MAGIC, 23, unsigned int)
+#define SET_VR_MODE		_IOW(ACOUSTIC_IOCTL_MAGIC, 24, unsigned int)
 
 #define HTCRPOG	0x30100002
 #define HTCVERS 0
+#if defined(CONFIG_ARCH_MSM7227)
+#define HTC_ACOUSTIC_TABLE_SIZE        (0x18000)
+#else
 #define HTC_ACOUSTIC_TABLE_SIZE        (0x10000)
+#endif
 #define ONCRPC_SET_MIC_BIAS_PROC       (1)
 #define ONCRPC_ACOUSTIC_INIT_PROC      (5)
 #define ONCRPC_ALLOC_ACOUSTIC_MEM_PROC (6)
+#define ONCRPC_ENABLE_VR_MODE          (9)
 
 struct set_smem_req {
 	struct rpc_request_hdr hdr;
@@ -70,8 +77,13 @@ static int hac_enable_flag;
 static void *f_table;
 static int f_smem;
 static int hac_smem;
+#if defined(CONFIG_ARCH_MSM7227)
+static int table_offset = 0x00001600 + 0x00001600;
+static int table_size = 6 * 285 * sizeof(unsigned short);
+#else
 static int table_offset = 0x00000C00 + 0x00000C00;
 static int table_size = 6 * 160 * sizeof(unsigned short);
+#endif
 static int swap_f_table(int);
 static int first_time = 1;
 
@@ -116,10 +128,17 @@ static int swap_f_table(int enable)
 			first_time = 0;
 		}
 
+#if defined(CONFIG_ARCH_MSM7227)
+		for (i = 0; i < 6; i++) {
+			memcpy((void *)(f_smem + (i * 285 * sizeof(uint16_t))),
+				(void *)(hac_smem) , (285 * sizeof(uint16_t)));
+		}
+#else
 		for (i = 0; i < 6; i++) {
 			memcpy((void *)(f_smem + (i * 160 * sizeof(uint16_t))),
 				(void *)(hac_smem) , (160 * sizeof(uint16_t)));
 		}
+#endif
 	} else {
 		memcpy((void *)f_smem, f_table, table_size);
 
@@ -131,7 +150,6 @@ static int acoustic_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	unsigned long pgoff;
 	size_t size = vma->vm_end - vma->vm_start;
-
 	if (vma->vm_pgoff != 0)
 		return -EINVAL;
 
@@ -175,7 +193,8 @@ static int acoustic_open(struct inode *inode, struct file *file)
 		}
 
 		htc_acoustic_vir_addr =
-				(uint32_t)smem_alloc(SMEM_ID_VENDOR1, HTC_ACOUSTIC_TABLE_SIZE);
+				(uint32_t)smem_alloc(SMEM_ID_VENDOR1,
+						HTC_ACOUSTIC_TABLE_SIZE);
 		htc_acoustic_phy_addr = MSM_SHARED_RAM_PHYS +
 					(htc_acoustic_vir_addr -
 						(uint32_t)MSM_SHARED_RAM_BASE);
@@ -187,10 +206,17 @@ static int acoustic_open(struct inode *inode, struct file *file)
 			return -EFAULT;
 		}
 
+#if defined(CONFIG_ARCH_MSM7227)
+		f_smem = htc_acoustic_vir_addr + table_offset +
+				(12 * 285 * sizeof(unsigned short));
+		hac_smem = htc_acoustic_vir_addr + table_offset +
+				(27 * 285 * sizeof(unsigned short));
+#else
 		f_smem = htc_acoustic_vir_addr + table_offset +
 				(12 * 160 * sizeof(unsigned short));
 		hac_smem = htc_acoustic_vir_addr + table_offset +
 				(27 * 160 * sizeof(unsigned short));
+#endif
 	}
 
 	return 0;
@@ -205,12 +231,22 @@ static long acoustic_ioctl(struct file *file, unsigned int cmd,
 			   unsigned int arg)
 {
 	int rc, reply_value;
+	int vr_arg;
+	struct vr_mode_req {
+	    struct rpc_request_hdr hdr;
+	    uint32_t enable;
+	} vr_req;
 
 	switch (cmd) {
 	case ACOUSTIC_ARM11_DONE:
 #if 0
 		pr_info("ioctl ACOUSTIC_ARM11_DONE called %d.\n", current->pid);
 #endif
+#ifdef CONFIG_OUTER_CACHE
+		outer_flush_range(htc_acoustic_phy_addr,
+			htc_acoustic_phy_addr + HTC_ACOUSTIC_TABLE_SIZE);
+#endif
+
 		rc = msm_rpc_call_reply(endpoint,
 					ONCRPC_ACOUSTIC_INIT_PROC, &req,
 					sizeof(req), &rep, sizeof(rep),
@@ -227,11 +263,21 @@ static long acoustic_ioctl(struct file *file, unsigned int cmd,
 			return 0;
 		}
 		break;
+	case SET_VR_MODE:
+		if (copy_from_user(&vr_arg, (void *)arg, sizeof(vr_arg))) {
+		    rc = -EFAULT;
+		    break;
+		}
+		vr_req.enable = cpu_to_be32(vr_arg);
+		pr_info("htc_acoustic set_vr_mode: %d\n", vr_arg);
+		rc = msm_rpc_call(endpoint, ONCRPC_ENABLE_VR_MODE,
+			&vr_req, sizeof(vr_req), 5*HZ);
+		break;
 
 	default:
 		rc = -EINVAL;
 	}
-	return 0;
+	return rc;
 }
 
 static struct file_operations acoustic_fops = {
