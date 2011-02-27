@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.29.6
-# Fri Feb 25 16:57:26 2011
+# Sun Feb 27 06:58:23 2011
 #
 CONFIG_ARM=y
 CONFIG_SYS_SUPPORTS_APM_EMULATION=y
@@ -1312,7 +1312,7 @@ CONFIG_RTC_INTF_ALARM_DEV=y
 #
 # on-CPU RTC drivers
 #
-CONFIG_RTC_DRV_MSM7XXX=y
+CONFIG_RTC_DRV_MSM7X00A=y
 # CONFIG_DMADEVICES is not set
 # CONFIG_REGULATOR is not set
 # CONFIG_UIO is not set
