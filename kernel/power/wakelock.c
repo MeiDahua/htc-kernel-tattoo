@@ -30,9 +30,8 @@ enum {
 	DEBUG_SUSPEND = 1U << 2,
 	DEBUG_EXPIRE = 1U << 3,
 	DEBUG_WAKE_LOCK = 1U << 4,
-	DEBUG_FORBID_SUSPEND = 1U << 5,
 };
-static int debug_mask = DEBUG_EXIT_SUSPEND | DEBUG_WAKEUP | DEBUG_FORBID_SUSPEND;
+static int debug_mask = DEBUG_EXIT_SUSPEND | DEBUG_WAKEUP;
 module_param_named(debug_mask, debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 #define WAKE_LOCK_TYPE_MASK              (0x0f)
@@ -40,6 +39,8 @@ module_param_named(debug_mask, debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP);
 #define WAKE_LOCK_ACTIVE                 (1U << 9)
 #define WAKE_LOCK_AUTO_EXPIRE            (1U << 10)
 #define WAKE_LOCK_PREVENTING_SUSPEND     (1U << 11)
+
+#define TOO_MAY_LOCKS_WARNING		"\n\ntoo many wakelocks!!!\n"
 
 static DEFINE_SPINLOCK(list_lock);
 static LIST_HEAD(inactive_locks);
@@ -82,13 +83,14 @@ int get_expired_time(struct wake_lock *lock, ktime_t *expire_time)
 }
 
 
-static int print_lock_stat(struct seq_file *m, struct wake_lock *lock)
+static int print_lock_stat(char *buf, int len, struct wake_lock *lock)
 {
 	int lock_count = lock->stat.count;
 	int expire_count = lock->stat.expire_count;
 	ktime_t active_time = ktime_set(0, 0);
 	ktime_t total_time = lock->stat.total_time;
 	ktime_t max_time = lock->stat.max_time;
+	int n;
 
 	ktime_t prevent_suspend_time = lock->stat.prevent_suspend_time;
 	if (lock->flags & WAKE_LOCK_ACTIVE) {
@@ -110,34 +112,48 @@ static int print_lock_stat(struct seq_file *m, struct wake_lock *lock)
 			max_time = add_time;
 	}
 
-	return seq_printf(m,
+	n = snprintf(buf, len,
 		     "\"%s\"\t%d\t%d\t%d\t%lld\t%lld\t%lld\t%lld\t%lld\n",
 		     lock->name, lock_count, expire_count,
 		     lock->stat.wakeup_count, ktime_to_ns(active_time),
 		     ktime_to_ns(total_time),
 		     ktime_to_ns(prevent_suspend_time), ktime_to_ns(max_time),
 		     ktime_to_ns(lock->stat.last_time));
+
+	return n > len ? len : n;
 }
 
-static int wakelock_stats_show(struct seq_file *m, void *unused)
+
+static int wakelocks_read_proc(char *page, char **start, off_t off,
+			       int count, int *eof, void *data)
 {
 	unsigned long irqflags;
 	struct wake_lock *lock;
-	int ret;
+	int len = 0;
 	int type;
 
 	spin_lock_irqsave(&list_lock, irqflags);
 
-	ret = seq_puts(m, "name\tcount\texpire_count\twake_count\tactive_since"
+	len += snprintf(page + len, count - len,
+			"name\tcount\texpire_count\twake_count\tactive_since"
 			"\ttotal_time\tsleep_time\tmax_time\tlast_change\n");
-	list_for_each_entry(lock, &inactive_locks, link)
-		ret = print_lock_stat(m, lock);
+	list_for_each_entry(lock, &inactive_locks, link) {
+		len += print_lock_stat(page + len, count - len, lock);
+	}
 	for (type = 0; type < WAKE_LOCK_TYPE_COUNT; type++) {
 		list_for_each_entry(lock, &active_wake_locks[type], link)
-			ret = print_lock_stat(m, lock);
+			len += print_lock_stat(page + len, count - len, lock);
 	}
 	spin_unlock_irqrestore(&list_lock, irqflags);
-	return 0;
+
+	if (len == count)
+		memcpy(page + len - strlen(TOO_MAY_LOCKS_WARNING),
+		       TOO_MAY_LOCKS_WARNING,
+		       strlen(TOO_MAY_LOCKS_WARNING));
+
+	*eof = 1;
+
+	return len;
 }
 
 static void wake_unlock_stat_locked(struct wake_lock *lock, int expired)
@@ -207,8 +223,9 @@ static void expire_wake_lock(struct wake_lock *lock)
 }
 
 /* Caller must acquire the list_lock spinlock */
-static void print_active_locks_locked(int type)
+static void print_active_locks(int type)
 {
+	unsigned long irqflags;
 	struct wake_lock *lock;
 
 	BUG_ON(type >= WAKE_LOCK_TYPE_COUNT);
@@ -218,20 +235,11 @@ static void print_active_locks_locked(int type)
 			if (timeout <= 0)
 				pr_info("wake lock %s, expired\n", lock->name);
 			else
-				pr_info("active wake lock %s, time left %ld.%03lu\n",
-					lock->name, timeout / HZ,
-					(timeout % HZ) * MSEC_PER_SEC / HZ);
+				pr_info("active wake lock %s, time left %ld\n",
+					lock->name, timeout);
 		} else
 			pr_info("active wake lock %s\n", lock->name);
 	}
-}
-
-void print_active_locks(int type)
-{
-	unsigned long irqflags;
-	spin_lock_irqsave(&list_lock, irqflags);
-	print_active_locks_locked(type);
-	spin_unlock_irqrestore(&list_lock, irqflags);
 }
 
 static long has_wake_lock_locked(int type)
@@ -267,14 +275,12 @@ static void suspend(struct work_struct *work)
 {
 	int ret;
 	int entry_event_num;
-	unsigned long irqflags;
 
 	pr_info("[R] suspend start\n");
 	if (has_wake_lock(WAKE_LOCK_SUSPEND)) {
-		if (debug_mask & DEBUG_SUSPEND || debug_mask & DEBUG_FORBID_SUSPEND)
+		if (debug_mask & DEBUG_SUSPEND)
 			pr_info("suspend: abort suspend\n");
-		if (debug_mask & DEBUG_FORBID_SUSPEND)
-			print_active_locks(WAKE_LOCK_SUSPEND);
+		pr_info("[R] suspend abort (has wakelock)\n");
 		return;
 	}
 
@@ -310,7 +316,7 @@ static void expire_wake_locks(unsigned long data)
 		pr_info("expire_wake_locks: start\n");
 	spin_lock_irqsave(&list_lock, irqflags);
 	if (debug_mask & DEBUG_SUSPEND)
-		print_active_locks_locked(WAKE_LOCK_SUSPEND);
+		print_active_locks(WAKE_LOCK_SUSPEND);
 	has_lock = has_wake_lock_locked(WAKE_LOCK_SUSPEND);
 	if (debug_mask & DEBUG_EXPIRE)
 		pr_info("expire_wake_locks: done, has_lock %ld\n", has_lock);
@@ -322,15 +328,12 @@ static DEFINE_TIMER(expire_timer, expire_wake_locks, 0, 0);
 
 static int power_suspend_late(struct platform_device *pdev, pm_message_t state)
 {
-	unsigned long irqflags;
 	int ret = has_wake_lock(WAKE_LOCK_SUSPEND) ? -EAGAIN : 0;
 #ifdef CONFIG_WAKELOCK_STAT
 	wait_for_wakeup = 1;
 #endif
 	if (debug_mask & DEBUG_SUSPEND)
 		pr_info("power_suspend_late return %d\n", ret);
-	if (ret && (debug_mask & DEBUG_FORBID_SUSPEND))
-		print_active_locks(WAKE_LOCK_SUSPEND);
 	return ret;
 }
 
@@ -515,7 +518,7 @@ void wake_unlock(struct wake_lock *lock)
 		}
 		if (lock == &main_wake_lock) {
 			if (debug_mask & DEBUG_SUSPEND)
-				print_active_locks_locked(WAKE_LOCK_SUSPEND);
+				print_active_locks(WAKE_LOCK_SUSPEND);
 #ifdef CONFIG_WAKELOCK_STAT
 			update_sleep_wait_stats_locked(0);
 #endif
@@ -530,19 +533,6 @@ int wake_lock_active(struct wake_lock *lock)
 	return !!(lock->flags & WAKE_LOCK_ACTIVE);
 }
 EXPORT_SYMBOL(wake_lock_active);
-
-static int wakelock_stats_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, wakelock_stats_show, NULL);
-}
-
-static const struct file_operations wakelock_stats_fops = {
-	.owner = THIS_MODULE,
-	.open = wakelock_stats_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = single_release,
-};
 
 static int __init wakelocks_init(void)
 {
@@ -578,7 +568,8 @@ static int __init wakelocks_init(void)
 	}
 
 #ifdef CONFIG_WAKELOCK_STAT
-	proc_create("wakelocks", S_IRUGO, NULL, &wakelock_stats_fops);
+	create_proc_read_entry("wakelocks", S_IRUGO, NULL,
+				wakelocks_read_proc, NULL);
 #endif
 
 	return 0;
