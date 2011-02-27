@@ -28,11 +28,6 @@ enum {
 	SYNAPTICS_SNAP_TO_INACTIVE_EDGE = 1UL << 3,
 };
 
-enum {
-	FINGER_1_REPORT = 1 << 0,
-	FINGER_2_REPORT = 1 << 1,
-};
-
 struct synaptics_virtual_key {
 	int keycode;
 	int range_min;
@@ -71,7 +66,6 @@ struct synaptics_i2c_rmi_platform_data {
 	uint32_t display_height;
 	int8_t sensitivity_adjust;
 	uint32_t dup_threshold;
-	uint32_t margin_inactive_pixel[4];
 };
 
 struct page_description {
