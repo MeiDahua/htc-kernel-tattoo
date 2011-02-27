@@ -1,4 +1,4 @@
-/* drivers/rtc/rtc-msm7xxx.c
+/* drivers/rtc/rtc-msm7x00a.c
  *
  * Copyright (C) 2008 Google, Inc.
  * Author: San Mehat <san@google.com>
@@ -25,28 +25,11 @@
 #include <linux/msm_rpcrouter.h>
 
 #include <mach/msm_rpcrouter.h>
+#include <mach/msm_rpc_version.h>
 
 #define RTC_DEBUG 0
 
 extern void msm_pm_set_max_sleep_time(int64_t sleep_time_ns);
-
-#if defined(CONFIG_ARCH_MSM7225) || defined(CONFIG_ARCH_MSM7625)
-#define APP_TIMEREMOTE_PDEV_NAME "rs30000048:915823fc"
-#else
-#if (CONFIG_MSM_AMSS_VERSION == 6220) || (CONFIG_MSM_AMSS_VERSION == 6225)
-#define APP_TIMEREMOTE_PDEV_NAME "rs30000048:0da5b528"
-#else
-#if (CONFIG_MSM_AMSS_VERSION == 6355)
-#define APP_TIMEREMOTE_PDEV_NAME "rs30000048:00010001"
-#else
-#if (CONFIG_MSM_AMSS_VERSION == 4410)
-#define APP_TIMEREMOTE_PDEV_NAME "rs30000048:00010001"
-#else
-#define APP_TIMEREMOTE_PDEV_NAME "rs30000048:00000000"
-#endif
-#endif
-#endif
-#endif
 
 #define TIMEREMOTE_PROCEEDURE_SET_JULIAN	6
 #define TIMEREMOTE_PROCEEDURE_GET_JULIAN	7
@@ -87,21 +70,6 @@ msmrtc_timeremote_set_time(struct device *dev, struct rtc_time *tm)
 	if (tm->tm_year < 1970)
 		return -EINVAL;
 
-//BEGIN htc-added
-#ifdef CONFIG_MSM_AMSS_VERSION
-	/*
-	 * The internal time-base which QCT Modem can handle is 1980.01.01 UTC
-	 * The GPS time-base which QCT Modem can handle is 1980.01.06 UTC
-	 * From experiment, we take 1980.01.01 UTC as time-base
-	 * NOTICE! tm is already transformed to UTC time
-	 */
-	if (tm->tm_year < 1980) {
-		printk(KERN_ERR "%s: Can't set date before 1980-01-01 UTC\n", __func__);
-		return -EINVAL;
-	}
-#endif
-//END htc-added
-	
 #if RTC_DEBUG
 	printk(KERN_DEBUG "%s: %.2u/%.2u/%.4u %.2u:%.2u:%.2u (%.2u)\n",
 	       __func__, tm->tm_mon, tm->tm_mday, tm->tm_year,
@@ -302,6 +270,6 @@ static int __init msmrtc_init(void)
 
 module_init(msmrtc_init);
 
-MODULE_DESCRIPTION("RTC driver for Qualcomm MSM7xxx chipsets");
+MODULE_DESCRIPTION("RTC driver for Qualcomm MSM7x00a chipsets");
 MODULE_AUTHOR("San Mehat <san@android.com>");
 MODULE_LICENSE("GPL");

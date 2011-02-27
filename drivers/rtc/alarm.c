@@ -583,7 +583,7 @@ static void  __exit alarm_exit(void)
 	platform_driver_unregister(&alarm_driver);
 }
 
-//Export symbol for Broadcomm Wifi module.
+//Export symbol for Wifi module.
 EXPORT_SYMBOL(alarm_init);
 EXPORT_SYMBOL(alarm_cancel);
 EXPORT_SYMBOL(alarm_get_elapsed_realtime);

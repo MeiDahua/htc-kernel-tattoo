@@ -120,12 +120,6 @@ from_old_alarm_set:
 		spin_lock_irqsave(&alarm_slock, flags);
 		pr_alarm(IO, "alarm %d set %ld.%09ld\n", alarm_type,
 			new_alarm_time.tv_sec, new_alarm_time.tv_nsec);
-		if (new_alarm_time.tv_sec < 0 || new_alarm_time.tv_nsec < 0) {
-			pr_err("alarm: set negative time, trigger it by now:"
-				" type %d (%ld.%09ld)\n", alarm_type,
-				new_alarm_time.tv_sec, new_alarm_time.tv_nsec);
-			getnstimeofday(&new_alarm_time);
-		}
 		alarm_enabled |= alarm_type_mask;
 		alarm_start_range(&alarms[alarm_type],
 			timespec_to_ktime(new_alarm_time),
