@@ -383,13 +383,6 @@ void __init msm_add_mem_devices(struct msm_pmem_setting *setting)
 	}
 }
 
-#define PM_LIBPROG      0x30000061
-#if (CONFIG_MSM_AMSS_VERSION == 6220) || (CONFIG_MSM_AMSS_VERSION == 6225)
-#define PM_LIBVERS      0xfb837d0b
-#else
-#define PM_LIBVERS      0x10001
-#endif
-
 #if 0
 static struct platform_device *msm_serial_devices[] __initdata = {
 	&msm_device_uart1,
