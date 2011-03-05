@@ -20,6 +20,8 @@
 #include "bus.h"
 #include "mmc_ops.h"
 
+#define WAIT_CMD6_MAX	16
+
 static const unsigned int tran_exp[] = {
 	10000,		100000,		1000000,	10000000,
 	0,		0,		0,		0
@@ -212,8 +214,8 @@ static int mmc_read_ext_csd(struct mmc_card *card)
 		printk(KERN_ERR "%s: unrecognised EXT_CSD structure "
 			"version %d\n", mmc_hostname(card->host),
 			ext_csd_struct);
-		err = -EINVAL;
-		goto out;
+		/*err = -EINVAL;
+		goto out;*/
 	}
 
 	if (ext_csd_struct >= 2) {
@@ -294,9 +296,10 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 	struct mmc_card *oldcard)
 {
 	struct mmc_card *card;
-	int err;
+	int err, count;
 	u32 cid[4];
 	unsigned int max_dtr;
+	u32 status;
 
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
@@ -415,6 +418,17 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		mmc_set_timing(card->host, MMC_TIMING_MMC_HS);
 	}
 
+	count = 0;
+	do {
+		err = mmc_send_status(card, &status);
+		if (err)
+			goto free_card;
+		if (status & R1_READY_FOR_DATA)
+			break;
+		else
+			mdelay(1);
+	} while (++count < WAIT_CMD6_MAX);
+
 	/*
 	 * Compute bus speed.
 	 */
@@ -451,6 +465,17 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 			goto free_card;
 
 		mmc_set_bus_width(card->host, bus_width);
+
+		count = 0;
+		do {
+			err = mmc_send_status(card, &status);
+			if (err)
+				goto free_card;
+			if (status & R1_READY_FOR_DATA)
+				break;
+			else
+				mdelay(1);
+		} while (++count < WAIT_CMD6_MAX);
 	}
 
 	if (!oldcard)

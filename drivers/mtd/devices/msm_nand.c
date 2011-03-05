@@ -256,6 +256,7 @@ int flash_read_config(struct msm_nand_chip *chip)
 		/* 0 spare bytes for 16 bit nand or 1 spare bytes for 8 bit */
 		| ((chip->CFG1 & CFG1_WIDE_FLASH) ? (0 << 23) : (1 << 23));
 	chip->CFG1 = chip->CFG1
+		&   ~(1 <<  0)  /* Enable ecc */
 #if IGNORE_ARM9_CONFIG
 		/* use ARM11 own setting on CFG1 */
 		|    (7 <<  2)  /* 8 recovery cycles */
@@ -263,10 +264,9 @@ int flash_read_config(struct msm_nand_chip *chip)
 		|    (2 << 17)  /* 6 cycle tWB/tRB */
 #endif
 		|  (465 <<  6)  /* Bad block marker location */
+		&   ~(1 << 16)  /* Bad block in user data area */
 		| (chip->CFG1 & CFG1_WIDE_FLASH); /* preserve wide flag */
-	chip->CFG1 = chip->CFG1
-		&   ~(1 <<  0)  /* Enable ecc */
-		&   ~(1 << 16); /* Bad block in user data area */
+
 	msm_nand_release_dma_buffer(chip, dma_buffer, sizeof(*dma_buffer));
 
 	if ((chip->CFG0 == 0) || (chip->CFG1 == 0))

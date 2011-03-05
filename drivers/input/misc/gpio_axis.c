@@ -17,11 +17,18 @@
 #include <linux/gpio.h>
 #include <linux/gpio_event.h>
 #include <linux/interrupt.h>
-
+#ifdef CONFIG_MACH_HERO
+#include <linux/hrtimer.h>
+#include <asm/atomic.h>
+#endif
 struct gpio_axis_state {
-	struct input_dev *input_dev;
+	struct gpio_event_input_devs *input_devs;
 	struct gpio_event_axis_info *info;
 	uint32_t pos;
+#ifdef CONFIG_MACH_HERO
+	struct hrtimer emc_hrtimer_delay;
+	atomic_t atomic_emc_hrtimer_is_run;
+#endif
 };
 
 uint16_t gpio_axis_4bit_gray_map_table[] = {
@@ -87,26 +94,82 @@ static void gpio_event_update_axis(struct gpio_axis_state *as, int report)
 			if (ai->flags & GPIOEAF_PRINT_EVENT)
 				pr_info("axis %d-%d change %d\n",
 					ai->type, ai->code, change);
-			input_report_rel(as->input_dev, ai->code, change);
+			input_report_rel(as->input_devs->dev[ai->dev],
+						ai->code, change);
 		} else {
 			if (ai->flags & GPIOEAF_PRINT_EVENT)
 				pr_info("axis %d-%d now %d\n",
 					ai->type, ai->code, pos);
-			input_event(as->input_dev, ai->type, ai->code, pos);
+			input_event(as->input_devs->dev[ai->dev],
+					ai->type, ai->code, pos);
 		}
-		input_sync(as->input_dev);
+		input_sync(as->input_devs->dev[ai->dev]);
 	}
 	as->pos = pos;
 }
 
+#ifdef CONFIG_MACH_HERO
+static enum hrtimer_restart emc_progress_hrtimer_handler_func
+							(struct hrtimer *timer)
+{
+
+	struct gpio_axis_state *as =
+		container_of(timer, struct gpio_axis_state, emc_hrtimer_delay);
+	struct gpio_event_axis_info *ai = as->info;
+	uint16_t dmc_gpio_status = 0;
+	int i;
+
+	atomic_set(&as->atomic_emc_hrtimer_is_run, 0);
+	for (i = ai->count - 1; i >= 0; i--)
+		dmc_gpio_status =
+			(dmc_gpio_status << 1) | gpio_get_value(ai->gpio[i]);
+	if(dmc_gpio_status == ai->emc_gpio_state)
+		gpio_event_update_axis(as, 1);
+
+	for (i = ai->count - 1; i >= 0; i--) {
+		if(atomic_read(&ai->emc_disable_irqnum) & (1 << i)) {
+			enable_irq(gpio_to_irq(ai->gpio[i]));
+			atomic_set(&ai->emc_disable_irqnum,
+				atomic_read(&ai->emc_disable_irqnum) &
+							~(1 << i));
+		}
+	}
+
+	return HRTIMER_NORESTART;
+}
+#endif
+
 static irqreturn_t gpio_axis_irq_handler(int irq, void *dev_id)
 {
 	struct gpio_axis_state *as = dev_id;
-	gpio_event_update_axis(as, 1);
+#ifdef CONFIG_MACH_HERO
+	struct gpio_event_axis_info *ai = as->info;
+	int i;
+	if(ai->enable_emc_protect_delay) {
+		ai->emc_gpio_state = 0;
+		for (i = ai->count - 1; i >= 0; i--) {
+			ai->emc_gpio_state = (ai->emc_gpio_state << 1) |
+						gpio_get_value(ai->gpio[i]);
+			if(irq == gpio_to_irq(ai->gpio[i])) {
+				atomic_set(&ai->emc_disable_irqnum,
+					atomic_read(&ai->emc_disable_irqnum) |
+								(1 << i));
+				disable_irq(gpio_to_irq(ai->gpio[i]));
+			}
+		}
+		if(!atomic_read(&as->atomic_emc_hrtimer_is_run)) {
+			atomic_set(&as->atomic_emc_hrtimer_is_run, 1);
+			hrtimer_start(&as->emc_hrtimer_delay,
+				ktime_set(0, ai->enable_emc_protect_delay),
+							HRTIMER_MODE_REL);
+		}
+	} else
+#endif
+		gpio_event_update_axis(as, 1);
 	return IRQ_HANDLED;
 }
 
-int gpio_event_axis_func(struct input_dev *input_dev,
+int gpio_event_axis_func(struct gpio_event_input_devs *input_devs,
 			 struct gpio_event_info *info, void **data, int func)
 {
 	int ret;
@@ -133,13 +196,33 @@ int gpio_event_axis_func(struct input_dev *input_dev,
 			ret = -ENOMEM;
 			goto err_alloc_axis_state_failed;
 		}
-		as->input_dev = input_dev;
+#ifdef CONFIG_MACH_HERO
+		if(ai->enable_emc_protect_delay) {
+			printk(KERN_DEBUG "%s: enable emc_protect: %d\n",
+				__func__, ai->enable_emc_protect_delay);
+			atomic_set(&ai->emc_disable_irqnum, 0);
+			atomic_set(&as->atomic_emc_hrtimer_is_run, 0);
+			hrtimer_init(&as->emc_hrtimer_delay, CLOCK_MONOTONIC,
+							HRTIMER_MODE_REL);
+			as->emc_hrtimer_delay.function =
+					emc_progress_hrtimer_handler_func;
+		}
+#endif
+		as->input_devs = input_devs;
 		as->info = ai;
+		if (ai->dev >= input_devs->count) {
+			pr_err("gpio_event_axis: bad device index %d >= %d "
+				"for %d:%d\n", ai->dev, input_devs->count,
+				ai->type, ai->code);
+			ret = -EINVAL;
+			goto err_bad_device_index;
+		}
 
-		input_set_capability(input_dev, ai->type, ai->code);
+		input_set_capability(input_devs->dev[ai->dev],
+				     ai->type, ai->code);
 		if (ai->type == EV_ABS) {
-			input_set_abs_params(input_dev, ai->code, 0,
-					     ai->decoded_size - 1, 0, 0);
+			input_set_abs_params(input_devs->dev[ai->dev], ai->code,
+					     0, ai->decoded_size - 1, 0, 0);
 		}
 		for (i = 0; i < ai->count; i++) {
 			ret = gpio_request(ai->gpio[i], "gpio_event_axis");
@@ -173,6 +256,7 @@ err_gpio_direction_input_failed:
 err_request_gpio_failed:
 		;
 	}
+err_bad_device_index:
 	kfree(as);
 	*data = NULL;
 err_alloc_axis_state_failed:

@@ -72,7 +72,7 @@ static int wifi_probe( struct platform_device *pdev )
     }
     return 0;
 }
-	
+
 static int wifi_remove( struct platform_device *pdev )
 {
     struct wifi_platform_data *wifi_ctrl = (struct wifi_platform_data *)(pdev->dev.platform_data);
@@ -103,7 +103,7 @@ static int wifi_add_dev( void )
 {
     return platform_driver_register( &wifi_device );
 }
-	
+
 static void wifi_del_dev( void )
 {
     platform_driver_unregister( &wifi_device );
@@ -154,7 +154,7 @@ static int emapi_sdio_probe(struct sdio_func *func, const struct sdio_device_id 
 	if (rc)
 	   	goto sdio_err2;
 
-	rc = sdio_set_block_size(func, 512); 
+	rc = sdio_set_block_size(func, 512);
 	if (rc)
 	   	goto sdio_err2;
 
@@ -195,7 +195,7 @@ static int emapi_calibration_read(char *page, char **start, off_t off,
 	nvs = get_wifi_nvs_ram();
 	if (nvs) {
 	   	/* htc specific, 0x0c: body len */
-	   	memcpy(&len, nvs + 0x0c, 4); 
+		memcpy(&len, nvs + 0x0c, 4);
 		/* max size is 2048 */
 		len = min(len+ 0x40, (unsigned long)2048);
 		memcpy((void *)page, (void *) nvs, len);
@@ -237,7 +237,7 @@ int emapi_sdio_init(unsigned long arg)
 				sdio_unregister_driver(&emapi_sdio_drv);
 #ifdef CONFIG_WIFI_CONTROL_FUNC
 			wifi_del_dev();
-#else	
+#else
 			printk(KERN_CRIT "EMAPI: fail to power off\n");
 #endif
 			emapi.sdio_status = 0;
@@ -262,7 +262,7 @@ error:
 		sdio_unregister_driver(&emapi_sdio_drv);
 #ifdef CONFIG_WIFI_CONTROL_FUNC
 	wifi_del_dev();
-#else	
+#else
 	printk(KERN_CRIT "EMAPI: fail to power off\n");
 #endif
 	return rc;
@@ -273,7 +273,7 @@ static int emapi_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 {
    	int error = 0;
 	int retval = 0;
-	struct sdio_request req; 
+	struct sdio_request req;
 
 	if (_IOC_TYPE(cmd) != MAGIC)
 		return -ENOTTY;
@@ -281,12 +281,12 @@ static int emapi_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 		return -ENOTTY;
 
 	if (_IOC_DIR(cmd) & _IOC_READ)
-		error = !access_ok(VERIFY_WRITE, (void __user*)arg, _IOC_SIZE(cmd));   	
+		error = !access_ok(VERIFY_WRITE, (void __user*)arg, _IOC_SIZE(cmd));
 	if (_IOC_DIR(cmd) & _IOC_WRITE)
-		error = !access_ok(VERIFY_READ, (void __user*)arg, _IOC_SIZE(cmd));   	
+		error = !access_ok(VERIFY_READ, (void __user*)arg, _IOC_SIZE(cmd));
 	if (error)
 		return -ENOTTY;
-	
+
 	if (cmd != EMAPI_IOC_INIT) {
 		if (copy_from_user(&req, (void __user *) arg, sizeof(struct sdio_request)))
 			return -EFAULT;
@@ -319,7 +319,7 @@ static int emapi_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 			break;
 		case EMAPI_IOC_GETEEPROM:
 			retval = emapi_get_eeprom(req.buf);
-			break;	
+			break;
 		case EMAPI_IOC_SETEEPROM:
 			break;
 		case EMAPI_IOC_TADDR2SADDR:
@@ -356,13 +356,13 @@ static struct file_operations emapi_fops = {
 	.owner		= THIS_MODULE,
 	.ioctl		= emapi_ioctl,
 	.open		= emapi_open,
-	.release	= emapi_release, 
+	.release	= emapi_release,
 };
 
 static struct miscdevice emapi_device = {
 	.minor	= MISC_DYNAMIC_MINOR,
 	.name	= "emapi",
-	.fops	= &emapi_fops,	
+	.fops	= &emapi_fops,
 };
 
 static int emapi_init_module(void)
@@ -400,7 +400,7 @@ static int emapi_init_module(void)
 
 	/* register char drv */
 	rc = alloc_chrdev_region(&emapi.emapi_cdevno, 0, 1, DEV_NAME);
-	if (rc) { 
+	if (rc) {
 		class_destroy(emapi.emapi_class);
 		device_destroy(emapi.emapi_class, 0);
 		emapi.device = NULL;
@@ -441,7 +441,7 @@ init_err:
 	device_destroy(emapi.emapi_class, 0);
 	emapi.device = NULL;
 	emapi.emapi_class = NULL;
-	unregister_chrdev_region(emapi.emapi_cdevno, 1);	
+	unregister_chrdev_region(emapi.emapi_cdevno, 1);
 	return rc;
 #endif
 }
@@ -452,7 +452,7 @@ static void emapi_exit_module(void)
    		sdio_unregister_driver(&emapi_sdio_drv);
 #ifdef CONFIG_WIFI_CONTROL_FUNC
 	wifi_del_dev();
-#else	
+#else
 	printk(KERN_CRIT "EMAPI: fail to power off\n");
 #endif
 
@@ -462,7 +462,7 @@ static void emapi_exit_module(void)
 #else
 	class_destroy(emapi.emapi_class);
 	device_destroy(emapi.emapi_class, 0);
-	unregister_chrdev_region(emapi.emapi_cdevno, 1);	
+	unregister_chrdev_region(emapi.emapi_cdevno, 1);
 #endif
 	remove_proc_entry("emapi_calibration", NULL);
 }
@@ -470,5 +470,4 @@ static void emapi_exit_module(void)
 module_init(emapi_init_module);
 module_exit(emapi_exit_module);
 
-MODULE_AUTHOR("max_tsai@htc.com");
 MODULE_LICENSE("GPL");
