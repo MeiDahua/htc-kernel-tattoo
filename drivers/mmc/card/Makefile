@@ -12,4 +12,4 @@ obj-$(CONFIG_MMC_TEST)		+= mmc_test.o
 
 obj-$(CONFIG_SDIO_UART)		+= sdio_uart.o
 
-obj-y                           += sdio_emapi.o sdio_emapi_util.o
+obj-$(CONFIG_MMC_SDIO_EMAPI)	+= sdio_emapi.o sdio_emapi_util.o
