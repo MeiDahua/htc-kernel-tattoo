@@ -16,46 +16,46 @@
 
 #include <mach/board.h>
 
-#define MSM_LINUX_BASE1    0x02E00000
-#define MSM_LINUX_SIZE1    0x05200000
-#define MSM_LINUX_BASE2_MONODIE    0x08000000
-#define MSM_LINUX_BASE2_DUALDIE    0x20000000
-#define MSM_LINUX_SIZE2    0x06E00000
+#define MSM_LINUX_BASE1			0x02E00000
+#define MSM_LINUX_SIZE1			0x05200000
+#define MSM_LINUX_BASE2_MONODIE		0x08000000
+#define MSM_LINUX_BASE2_DUALDIE		0x20000000
+#define MSM_LINUX_SIZE2			0x06E00000
 
-#define MSM_EBI1_CS0_BASE	0x00000000
-#define MSM_EBI1_CS0_SIZE	0x5500000
+#define MSM_EBI1_CS0_BASE		0x00000000
+#define MSM_EBI1_CS0_SIZE		0x5500000
 
-#define MSM_EBI1_CS1_BASE	0x20000000
-#define MSM_EBI1_CS1_SIZE	0x2000000
+#define MSM_EBI1_CS1_BASE		0x20000000
+#define MSM_EBI1_CS1_SIZE		0x2000000
 
-#define MSM_PMEM_MDP_BASE	0x00000000
-#define MSM_PMEM_MDP_SIZE	0x00800000
+#define MSM_PMEM_MDP_BASE		0x00000000
+#define MSM_PMEM_MDP_SIZE		0x00800000
 
 #define MSM_PMEM_ADSP_BASE_MONODIE	0x0F000000
 #define MSM_PMEM_ADSP_BASE_DUALDIE	0x27000000
-#define MSM_PMEM_ADSP_SIZE	0x00800000
+#define MSM_PMEM_ADSP_SIZE		0x00800000
 
 #define MSM_PMEM_CAMERA_BASE_MONODIE	0x0F800000
 #define MSM_PMEM_CAMERA_BASE_DUALDIE	0x27800000
-#define MSM_PMEM_CAMERA_SIZE	0x00800000
+#define MSM_PMEM_CAMERA_SIZE		0x00800000
 
-#define MSM_LINUX_BASE		MSM_EBI1_CS0_BASE + 0x400000
-#define MSM_LINUX_SIZE		0x5100000
+#define MSM_LINUX_BASE			MSM_EBI1_CS0_BASE + 0x400000
+#define MSM_LINUX_SIZE			0x5100000
 
-#define MSM_FB_BASE		0x02D00000
-#define MSM_FB_SIZE		0x9b000
+#define MSM_FB_BASE			0x02D00000
+#define MSM_FB_SIZE			0x9b000
 
-#define MSM_RAM_CONSOLE_BASE    MSM_FB_BASE + MSM_FB_SIZE
-#define MSM_RAM_CONSOLE_SIZE	128 * SZ_1K
+#define MSM_RAM_CONSOLE_BASE		MSM_FB_BASE + MSM_FB_SIZE
+#define MSM_RAM_CONSOLE_SIZE		128 * SZ_1K
 
 #define DECLARE_MSM_IOMAP
 #include <mach/msm_iomap.h>
 
 #define BAHAMAS_POWER_KEY		20
-#define BAHAMAS_GPIO_WIFI_EN	102
-#define BAHAMAS_GPIO_SDMC_CD_N	38
+#define BAHAMAS_GPIO_WIFI_EN		102
+#define BAHAMAS_GPIO_SDMC_CD_N		38
  /*CC090320*/
-#define BAHAMAS_MT9T013_CAM_PWDN                   (91)
+#define BAHAMAS_MT9T013_CAM_PWDN	(91)
 #define BAHAMAS_GPIO_CABLE_IN1		18
 #define BAHAMAS_XD_GPIO_UP_INT		27
 #define BAHAMAS_GPIO_CABLE_IN2		31
@@ -68,9 +68,9 @@
 #define BAHAMAS_GPIO_AUD_EXTMIC_SEL	113
 #define BAHAMAS_GPIO_WFM_ANT_SW		121
 
-#define BAHAMAS_GPIO_UP_RESET_N     76
-#define BAHAMAS_GPIO_PS_HOLD        25
-#define BAHAMAS_GPIO_WB_SHUT_DOWN_N        101
+#define BAHAMAS_GPIO_UP_RESET_N     	76
+#define BAHAMAS_GPIO_PS_HOLD        	25
+#define BAHAMAS_GPIO_WB_SHUT_DOWN_N	101
 
 #define BAHAMAS_GPIO_H2W_POWER		513
 #define BAHAMAS_H2W_POWER_NAME		"gp2"
@@ -79,8 +79,8 @@
 #define BAHAMA_GPIO_COMPASS_INT_N	37
 #define BAHAMA_GPIO_GSENSOR_INT_N	49
 
-#define BAHAMAS_MDDI_RSTz              82
-#define BAHAMAS_V_VDDE2E_VDD2_GPIO     0
+#define BAHAMAS_MDDI_RSTz		82
+#define BAHAMAS_V_VDDE2E_VDD2_GPIO	0
 //int bahamas_init_keypad(unsigned int sys_rev, const char *keycaps);
 //int trout_init_gpio(unsigned int sys_rev);
 //int trout_init_cpldshadow(unsigned int sys_rev);
@@ -89,11 +89,8 @@
 
 //struct sys_device;
 //int trout_sysdev_resume(struct sys_device *dev);
-/*CC090330*/
 unsigned int bahamas_get_hwid(void);
 unsigned int bahamas_get_skuid(void);
 unsigned bahamas_engineerid(void);
 int bahamas_is_3M_camera(void);
-/*~CC090330*/
-
-#endif /* GUARD */
+#endif

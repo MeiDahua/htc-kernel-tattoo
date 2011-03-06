@@ -68,7 +68,7 @@ struct wifi_platform_data bahamas_wifi_control = {
 	.mem_prealloc		= bahamas_wifi_mem_prealloc,
 #else
 	.mem_prealloc		= NULL,
-#endif	
+#endif
 };
 
 #endif
