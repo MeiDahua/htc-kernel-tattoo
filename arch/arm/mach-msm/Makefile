@@ -23,7 +23,6 @@ obj-$(CONFIG_MSM_HW3D) += hw3d.o
 obj-$(CONFIG_PM) += pm.o
 obj-$(CONFIG_MSM_CPU_FREQ) += cpufreq.o
 
-obj-y += htc_wifi_nvs.o htc_wifi.o
 obj-$(CONFIG_TOUCHSCREEN_TSSC_MANAGER) += htc_tp_cal.o
 obj-$(CONFIG_HTC_ACOUSTIC) += htc_acoustic.o
 obj-$(CONFIG_SENSORS_AKM8976) += htc_akm_cal.o
@@ -32,8 +31,7 @@ obj-$(CONFIG_HTC_BATTCHG) += htc_battery.o
 
 # MSM7225 boards
 obj-$(CONFIG_MACH_BAHAMAS) += board-bahamas.o board-click-panel.o board-bahamas-keypad.o
-obj-$(CONFIG_MACH_BAHAMAS) += board-bahamas-mmc.o
-obj-$(CONFIG_MACH_BAHAMAS) += board-bahamas-rfkill.o
+obj-$(CONFIG_MACH_BAHAMAS) += board-bahamas-mmc.o board-bahamas-rfkill.o htc_wifi_nvs.o board-bahamas-wifi.o
 
 
 obj-$(CONFIG_PERFLOCK) += perflock.o

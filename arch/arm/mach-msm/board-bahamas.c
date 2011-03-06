@@ -71,6 +71,9 @@
 #include <mach/perflock.h>
 #include <mach/drv_callback.h>
 #include <mach/camera.h>  /*CC090518*/
+#ifdef CONFIG_WIFI_CONTROL_FUNC
+#include <linux/wifi_tiwlan.h>
+#endif
 
 void msm_init_irq(void);
 void msm_init_gpio(void);
@@ -79,11 +82,15 @@ void config_bahamas_camera_on_gpios(void);
 void config_bahamas_camera_off_gpios(void);
 
 extern int bahamas_init_mmc(unsigned int);
-/*CC090319*/
+#ifdef CONFIG_WIFI_CONTROL_FUNC
+#ifdef CONFIG_WIFI_MEM_PREALLOC
+extern int bahamas_init_wifi_mem(void);
+#endif
+extern struct wifi_platform_data bahamas_wifi_control;
+#endif
 static unsigned int hwid;
 static unsigned int skuid;
 static unsigned engineerid;
-/*~CC090319*/
 
 enum {
 	PANEL_HITACHI = 0,
@@ -693,6 +700,18 @@ static struct msm_pmem_setting pmem_setting_monodie = {
 	.ram_console_size = MSM_RAM_CONSOLE_SIZE,
 };
 
+#ifdef CONFIG_WIFI_CONTROL_FUNC
+static struct platform_device bahamas_wifi = {
+        .name           = "msm_wifi",
+        .id             = 1,
+        .num_resources  = 0,
+        .resource       = NULL,
+        .dev            = {
+        .platform_data = &bahamas_wifi_control,
+        },
+};
+#endif
+
 static struct msm_pmem_setting pmem_setting_dualdie = {
 	.pmem_start = MSM_PMEM_MDP_BASE,
 	.pmem_size = MSM_PMEM_MDP_SIZE,
@@ -771,6 +790,9 @@ static struct platform_device *devices[] __initdata = {
 	&bahamas_reset_keys_device,
 #ifdef CONFIG_HTC_PWRSINK
 	&bahamas_pwr_sink,
+#endif
+#ifdef CONFIG_WIFI_CONTROL_FUNC
+        &bahamas_wifi,
 #endif
 };
 
@@ -1052,6 +1074,13 @@ static void __init bahamas_init(void)
 	if (rc)
 		printk(KERN_CRIT "%s: MMC init failure (%d)\n", __func__, rc);
 #endif
+
+#ifdef CONFIG_WIFI_MEM_PREALLOC
+        rc = bahamas_init_wifi_mem();
+        if (rc)
+                printk(KERN_CRIT "%s: WiFi Memory init failure (%d)\n", __func__, rc);
+#endif
+
 	if(!system_rev)
 		bahamas_reset_keys_device.dev.platform_data = &bahamas_reset_keys_pdata0;
 	/*CC090319*/
