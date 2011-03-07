@@ -135,10 +135,16 @@
 
 #define MMCIFIFO		0x080 /* to 0x0bc */
 
-#define MCI_IRQENABLE	\
+#define MCI_IRQENABLE_DEF	\
 	(MCI_CMDCRCFAILMASK|MCI_DATACRCFAILMASK|MCI_CMDTIMEOUTMASK|	\
 	MCI_DATATIMEOUTMASK|MCI_TXUNDERRUNMASK|MCI_RXOVERRUNMASK|	\
 	MCI_CMDRESPENDMASK|MCI_CMDSENTMASK|MCI_DATAENDMASK)
+
+#ifdef CONFIG_MMC_BLOCK_PROG_ENA
+#define MCI_IRQENABLE		(MCI_IRQENABLE_DEF|MCI_PROGDONEMASK)
+#else
+#define MCI_IRQENABLE		MCI_IRQENABLE_DEF
+#endif
 
 /*
  * The size of the FIFO in bytes.
@@ -149,7 +155,7 @@
 
 #define NR_SG		32
 
-#define WAIT_DAT0_HIGH_MAX		11
+#define WAIT_DAT0_HIGH_MAX	11
 
 struct clk;
 
@@ -173,6 +179,7 @@ struct msmsdcc_dma_data {
 	int				channel;
 	struct msmsdcc_host		*host;
 	int				busy; /* Set if DM is busy */
+	int				active;
 };
 
 struct msmsdcc_pio_data {
@@ -193,6 +200,13 @@ struct msmsdcc_curr_req {
 	int			user_pages;
 };
 
+struct msmsdcc_stats {
+	unsigned int reqs;
+	unsigned int cmds;
+	unsigned int cmdpoll_hits;
+	unsigned int cmdpoll_misses;
+};
+
 struct msmsdcc_host {
 	struct resource		*cmd_irqres;
 	struct resource		*pio_irqres;
@@ -209,6 +223,7 @@ struct msmsdcc_host {
 	struct clk		*pclk;		/* SDCC peripheral bus clock */
 	unsigned int		clks_on;	/* set if clocks are enabled */
 	struct timer_list	command_timer;
+	struct timer_list	busclk_timer;
 
 	unsigned int		eject;		/* eject state */
 
@@ -226,10 +241,24 @@ struct msmsdcc_host {
 
 	struct msmsdcc_dma_data	dma;
 	struct msmsdcc_pio_data	pio;
+	int			cmdpoll;
+	struct msmsdcc_stats	stats;
 
 #ifdef CONFIG_MMC_MSM7X00A_RESUME_IN_WQ
 	struct work_struct	resume_task;
 #endif
+	/* if set, need to set PROG_ENA in CMD12 */
+	unsigned int		prog_scan;
+	/* if set, we should wait PROG_DONE */
+	unsigned int		prog_enable;
+
+	/* Command parameters */
+	unsigned int		cmd_timeout;
+	unsigned int		cmd_pio_irqmask;
+	unsigned int		cmd_datactrl;
+	struct mmc_command	*cmd_cmd;
+	u32			cmd_c;
+
 };
 
 #endif
