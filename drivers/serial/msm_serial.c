@@ -31,6 +31,7 @@
 #include <linux/serial.h>
 #include <linux/clk.h>
 #include <linux/platform_device.h>
+#include <mach/msm_serial_hs.h>
 
 #include "msm_serial.h"
 
@@ -882,6 +883,7 @@ static int __init msm_serial_probe(struct platform_device *pdev)
 	struct msm_port *msm_port;
 	struct resource *resource;
 	struct uart_port *port;
+	struct msm_serial_platform_data *pdata = pdev->dev.platform_data;
 
 	if (unlikely(pdev->id < 0 || pdev->id >= UART_NR))
 		return -ENXIO;

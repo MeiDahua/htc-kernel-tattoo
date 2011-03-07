@@ -1,6 +1,6 @@
 /* drivers/serial/msm_serial_hs.c
  *
- * MSM 7k High speed uart driver
+ * MSM 7k/8k High speed uart driver
  *
  * Copyright (c) 2007-2008 QUALCOMM Incorporated.
  * Copyright (c) 2008 QUALCOMM USA, INC.
@@ -46,7 +46,7 @@
 #include <linux/wakelock.h>
 
 #include <asm/atomic.h>
-#include <asm/irq.h>
+#include <linux/irq.h>
 #include <asm/system.h>
 
 #include <mach/hardware.h>
@@ -55,7 +55,6 @@
 
 #include "msm_serial_hs_hwreg.h"
 
-#define SERIAL_FOR_BTIPS
 #define SERIAL_CPU_LOCK_SUPPORTED
 
 #ifdef SERIAL_CPU_LOCK_SUPPORTED
@@ -148,6 +147,12 @@ struct msm_hs_port {
 	struct perf_lock serial_perf_lock_high;
 	struct perf_lock serial_perf_lock_low;
 	#endif
+
+	#if 1	/* only for legned? */
+	void (*config_as_uart)(void);
+	void (*config_as_gpio)(void);
+	int (*need_config)(void);
+	#endif
 };
 
 #define MSM_UARTDM_BURST_SIZE 16   /* DM burst size (in bytes) */
@@ -168,7 +173,7 @@ static struct uart_ops msm_hs_ops;
 #define LOCKHIGH 0x02
 #define LOCKLOW 0x01
 static unsigned char serial_lock_cpu_state;
-#define SERIAL_HS_CREATE_DEVICE_ATTR(_name)					\
+#define SERIAL_HS_CREATE_DEVICE_ATTR(_name)				\
 	struct device_attribute dev_attr_##_name = {			\
 		.attr = {						\
 			.name = __stringify(_name),			\
@@ -182,7 +187,7 @@ static unsigned char serial_lock_cpu_state;
 		dev_attr_##_name.attr.mode = _mode;			\
 		dev_attr_##_name.show = _show;				\
 		dev_attr_##_name.store = _store;			\
-	} while(0)
+	} while (0)
 
 
 static SERIAL_HS_CREATE_DEVICE_ATTR(serial_lock_cpu);
@@ -202,83 +207,86 @@ static ssize_t show_serial_lock_cpu(struct device *dev,
 	return sprintf(buf, "%d\n", serial_lock_cpu_state);
 }
 
-static ssize_t store_serial_lock_cpu(struct device *dev, struct device_attribute *attr,
-			 const char *buf, size_t count)
+static ssize_t store_serial_lock_cpu(struct device *dev,
+			struct device_attribute *attr,
+			const char *buf, size_t count)
 {
-	char in_char[]="012345678912345";
+	char in_char[] = "012345678912345";
 	struct msm_hs_port *msm_uport;
-	
+
 	msm_uport = &q_uart_port[0];
 
-	if(strlen(buf)>15)
+	if (strlen(buf) > 15)
 		return 0;
 
 	sscanf(buf, "%s", in_char);
-		
-	if(strcmp(in_char,"cpu_lock_high")==0)
+
+	if (strcmp(in_char, "cpu_lock_high") == 0)
 		serial_lock_cpu_state = 2;
-	else if(strcmp(in_char,"cpu_lock_low")==0)
+	else if (strcmp(in_char, "cpu_lock_low") == 0)
 		serial_lock_cpu_state = 1;
-	else if(strcmp(in_char,"cpu_unlock")==0)
+	else if (strcmp(in_char, "cpu_unlock") == 0)
 		serial_lock_cpu_state = 0;
-	else if(strcmp(in_char,"cpu_lock")==0)	//for old control method, should remove it later
+	/* for old control method, should be removed later*/
+	else if (strcmp(in_char, "cpu_lock") == 0)
 		serial_lock_cpu_state = 2;
 	else
 		return 0;
 
-	if(msm_uport->cpu_lock_supported) {
-		if(2 == serial_lock_cpu_state) {	//lock cpu high
-			if(msm_uport->is_cpu_lock & LOCKHIGH)
-				printk("====== WARNING!! Lock HIGH, but was locked HIGH before!! ======\n");
-			else if(msm_uport->is_cpu_lock & LOCKLOW) {
-				printk("====== WARNING!! Lock HIGH, but was locked LOW before!!======\n");
+	if (msm_uport->cpu_lock_supported) {
+		if (2 == serial_lock_cpu_state) {	/* lock cpu high */
+			if (msm_uport->is_cpu_lock & LOCKHIGH)
+				printk(KERN_INFO "Lock H, but H before\n");
+			else if (msm_uport->is_cpu_lock & LOCKLOW) {
+				printk(KERN_INFO "Lock L, but L before\n");
 				perf_unlock(&msm_uport->serial_perf_lock_low);
 				msm_uport->is_cpu_lock &= !LOCKLOW;
 				msm_uport->is_cpu_lock |= LOCKHIGH;
 				perf_lock(&msm_uport->serial_perf_lock_high);
-				printk("======  UnLock LOW, Lock HIGH ======\n");
+				printk(KERN_INFO "UnLock L, Lock H\n");
 			} else{
 				msm_uport->is_cpu_lock |= LOCKHIGH;
 				perf_lock(&msm_uport->serial_perf_lock_high);
-				printk("======  Lock HIGH ======\n");
+				printk(KERN_INFO "Lock H\n");
 			}
-		} else if(1==serial_lock_cpu_state) {	//lock cpu low
-			if(msm_uport->is_cpu_lock & LOCKLOW)
-				printk("====== WARNING!! Lock LOW, but was locked LOW before!! ======\n");
-			else if(msm_uport->is_cpu_lock & LOCKHIGH) {
-				printk("====== WARNING!! Lock LOW, but was locked HIGH before!!======\n");
+		} else if (1 == serial_lock_cpu_state) { /* lock cpu low */
+			if (msm_uport->is_cpu_lock & LOCKLOW)
+				printk(KERN_INFO "Lock L, but L before \n");
+			else if (msm_uport->is_cpu_lock & LOCKHIGH) {
+				printk(KERN_INFO "Lock H, but H before \n");
 				perf_unlock(&msm_uport->serial_perf_lock_high);
 				msm_uport->is_cpu_lock &= !LOCKHIGH;
 				msm_uport->is_cpu_lock |= LOCKLOW;
 				perf_lock(&msm_uport->serial_perf_lock_low);
-				printk("======  UnLock HIGH, Lock LOW ======\n");
+				printk(KERN_INFO "UnLock H, Lock L\n");
 			} else{
 				msm_uport->is_cpu_lock |= LOCKLOW;
 				perf_lock(&msm_uport->serial_perf_lock_low);
-				printk("======  Lock LOW ======\n");
+				printk(KERN_INFO "Lock L\n");
 			}
-		} else {	//unlock cpu
-			if(!msm_uport->is_cpu_lock)
-				printk("====== #WARNING!! UnLocked all but was UnLocked before!! ======\n");
+		} else {	/* unlock cpu */
+			if (!msm_uport->is_cpu_lock)
+				printk(KERN_INFO "#UnLock all,UnLock before\n");
 			else {
-				if(msm_uport->is_cpu_lock & LOCKHIGH) {
-					perf_unlock(&msm_uport->serial_perf_lock_high);
+				if (msm_uport->is_cpu_lock & LOCKHIGH) {
+				perf_unlock(&msm_uport->serial_perf_lock_high);
 					msm_uport->is_cpu_lock &= !LOCKHIGH;
-					printk("====== #UnLock HIGH ======\n");
+					printk(KERN_INFO "#UnLock H\n");
 				}
-				if(msm_uport->is_cpu_lock & LOCKLOW) {
-					perf_unlock(&msm_uport->serial_perf_lock_low);
+				if (msm_uport->is_cpu_lock & LOCKLOW) {
+				perf_unlock(&msm_uport->serial_perf_lock_low);
 					msm_uport->is_cpu_lock &= !LOCKLOW;
-					printk("====== #UnLock LOW ======\n");
+					printk(KERN_INFO "#UnLock L\n");
 				}
 			}
 
 		}
 	}
-		
+
 	return strlen(in_char);
 }
 #endif
+
 static inline unsigned int use_low_power_wakeup(struct msm_hs_port *msm_uport)
 {
 	return (msm_uport->wakeup.irq >= 0);
@@ -489,11 +497,11 @@ static void msm_hs_set_bps_locked(struct uart_port *uport,
 		rxstale = 2;
 		break;
 	}
-	if (bps > 460800) {
+	if (bps > 460800)
 		uport->uartclk = bps * 16;
-	} else {
+	else
 		uport->uartclk = 7372800;
-	}
+
 	if (clk_set_rate(msm_uport->clk, uport->uartclk)) {
 		printk(KERN_WARNING "Error setting clock rate on UART\n");
 		return;
@@ -520,7 +528,7 @@ static void msm_hs_set_termios(struct uart_port *uport,
 	unsigned long flags;
 	unsigned int c_cflag = termios->c_cflag;
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
-	
+
 	spin_lock_irqsave(&uport->lock, flags);
 	clk_enable(msm_uport->clk);
 
@@ -537,13 +545,12 @@ static void msm_hs_set_termios(struct uart_port *uport,
 	data &= ~UARTDM_MR2_PARITY_MODE_BMSK;
 	/* set parity */
 	if (PARENB == (c_cflag & PARENB)) {
-		if (PARODD == (c_cflag & PARODD)) {
+		if (PARODD == (c_cflag & PARODD))
 			data |= ODD_PARITY;
-		} else if (CMSPAR == (c_cflag & CMSPAR)) {
+		else if (CMSPAR == (c_cflag & CMSPAR))
 			data |= SPACE_PARITY;
-		} else {
+		else
 			data |= EVEN_PARITY;
-		}
 	}
 
 	/* Set bits per char */
@@ -702,7 +709,7 @@ static void msm_hs_submit_tx_locked(struct uart_port *uport)
 		tx_count = left;
 
 	src_addr = tx->dma_base + tx_buf->tail;
-	
+
 	dma_sync_single_for_device(uport->dev, src_addr, tx_count,
 				   DMA_TO_DEVICE);
 
@@ -744,7 +751,7 @@ static void msm_hs_start_rx_locked(struct uart_port *uport)
 }
 
 /* Enable the transmitter Interrupt */
-static void msm_hs_start_tx_locked(struct uart_port *uport )
+static void msm_hs_start_tx_locked(struct uart_port *uport)
 {
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 
@@ -1034,14 +1041,17 @@ static int msm_hs_check_clock_off_locked(struct uart_port *uport)
 	/* we really want to clock off */
 	clk_disable(msm_uport->clk);
 	msm_uport->clk_state = MSM_HS_CLK_OFF;
+
 	if (use_low_power_wakeup(msm_uport)) {
 		msm_uport->wakeup.ignore = 1;
 		enable_irq(msm_uport->wakeup.irq);
 	}
+
 	return 1;
 }
 
-static enum hrtimer_restart msm_hs_clk_off_retry(struct hrtimer *timer) {
+static enum hrtimer_restart msm_hs_clk_off_retry(struct hrtimer *timer)
+{
 	unsigned long flags;
 	int ret = HRTIMER_NORESTART;
 	struct msm_hs_port *msm_uport = container_of(timer, struct msm_hs_port,
@@ -1104,7 +1114,7 @@ static irqreturn_t msm_hs_isr(int irq, void *dev)
 			msm_hs_write(uport, UARTDM_IMR_ADDR,
 				     msm_uport->imr_reg);
 		}
-	
+
 		/* Complete DMA TX transactions and submit new transactions */
 		tx_buf->tail = (tx_buf->tail + tx->tx_count) & ~UART_XMIT_SIZE;
 
@@ -1137,7 +1147,8 @@ static irqreturn_t msm_hs_isr(int irq, void *dev)
 }
 
 /* request to turn off uart clock once pending TX is flushed */
-void msm_hs_request_clock_off(struct uart_port *uport) {
+void msm_hs_request_clock_off(struct uart_port *uport)
+{
 	unsigned long flags;
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 
@@ -1151,7 +1162,8 @@ void msm_hs_request_clock_off(struct uart_port *uport) {
 	spin_unlock_irqrestore(&uport->lock, flags);
 }
 
-static void msm_hs_request_clock_on_locked(struct uart_port *uport) {
+static void msm_hs_request_clock_on_locked(struct uart_port *uport)
+{
 	struct msm_hs_port *msm_uport = UARTDM_TO_MSM(uport);
 	unsigned int data;
 
@@ -1160,6 +1172,7 @@ static void msm_hs_request_clock_on_locked(struct uart_port *uport) {
 		clk_enable(msm_uport->clk);
 		disable_irq(msm_uport->wakeup.irq);
 		/* fall-through */
+
 	case MSM_HS_CLK_REQUEST_OFF:
 		if (msm_uport->rx.flush == FLUSH_STOP ||
 		    msm_uport->rx.flush == FLUSH_SHUTDOWN) {
@@ -1180,35 +1193,31 @@ static void msm_hs_request_clock_on_locked(struct uart_port *uport) {
 	}
 }
 
-void msm_hs_request_clock_on(struct uart_port *uport) {
+void msm_hs_request_clock_on(struct uart_port *uport)
+{
 	unsigned long flags;
 	spin_lock_irqsave(&uport->lock, flags);
 	msm_hs_request_clock_on_locked(uport);
 	spin_unlock_irqrestore(&uport->lock, flags);
 }
 
-static int msm_uartdm_ioctl(struct uart_port *uport, unsigned int cmd, unsigned long arg)
+static int
+msm_uartdm_ioctl(struct uart_port *uport, unsigned int cmd, unsigned long arg)
 {
-#ifdef SERIAL_FOR_BTIPS	//for btips
-
 	switch (cmd) {
-		case 0x8001:
-			msm_hs_request_clock_on(uport);
-			break;
-			
-		case 0x8002:
-			msm_hs_request_clock_off(uport);
-			break;
-			
-		default:
-			return -ENOIOCTLCMD;
+	case 0x8001:
+		msm_hs_request_clock_on(uport);
+		break;
+
+	case 0x8002:
+		msm_hs_request_clock_off(uport);
+		break;
+
+	default:
+		return -ENOIOCTLCMD;
 	}
-	
+
 	return 0;
-	
-#else
-	return -ENOIOCTLCMD;
-#endif
 }
 
 static irqreturn_t msm_hs_wakeup_isr(int irq, void *dev)
@@ -1353,12 +1362,18 @@ static int msm_hs_startup(struct uart_port *uport)
 			  "msm_hs_uart", msm_uport);
 	if (unlikely(ret))
 		return ret;
+
 	if (use_low_power_wakeup(msm_uport)) {
+		/* move from startup  **/
+		if (unlikely(set_irq_wake(msm_uport->wakeup.irq, 1)))
+			return -ENXIO;
+
 		ret = request_irq(msm_uport->wakeup.irq, msm_hs_wakeup_isr,
-				  IRQF_TRIGGER_FALLING,
-				  "msm_hs_wakeup", msm_uport);
+					IRQF_TRIGGER_FALLING,
+					"msm_hs_wakeup", msm_uport);
 		if (unlikely(ret))
 			return ret;
+
 		disable_irq(msm_uport->wakeup.irq);
 	}
 
@@ -1436,6 +1451,9 @@ static int __init msm_hs_probe(struct platform_device *pdev)
 	struct resource *resource;
 	struct msm_serial_hs_platform_data *pdata = pdev->dev.platform_data;
 
+	/* for debug */
+	printk(KERN_INFO "TI chip\n");
+
 	if (pdev->id < 0 || pdev->id >= UARTDM_NR) {
 		printk(KERN_ERR "Invalid plaform device ID = %d\n", pdev->id);
 		return -EINVAL;
@@ -1471,24 +1489,43 @@ static int __init msm_hs_probe(struct platform_device *pdev)
 
 		if (unlikely(msm_uport->wakeup.irq < 0))
 			return -ENXIO;
-		if (unlikely(set_irq_wake(msm_uport->wakeup.irq, 1)))
-			return -ENXIO;
-		
+
+		/* move this to startup
+		 * if (unlikely(set_irq_wake(msm_uport->wakeup.irq, 1)))
+		 * return -ENXIO;
+		 */
+
 		#ifdef SERIAL_CPU_LOCK_SUPPORTED
 		msm_uport->cpu_lock_supported = pdata->cpu_lock_supported;
 		msm_uport->is_cpu_lock = 0;
-		if(msm_uport->cpu_lock_supported) {
-			perf_lock_init(&msm_uport->serial_perf_lock_high, PERF_LOCK_HIGHEST, "serial_locks_high");	// cpu=528MHz
-			perf_lock_init(&msm_uport->serial_perf_lock_low, PERF_LOCK_HIGH, "serial_locks_low");	// cpu=480MHz
+		if (msm_uport->cpu_lock_supported) {
+			/* cpu=528MHz */
+			perf_lock_init(&msm_uport->serial_perf_lock_high,
+					PERF_LOCK_HIGHEST, "serial_locks_high");
+			/* cpu=480MHz */
+			perf_lock_init(&msm_uport->serial_perf_lock_low,
+					PERF_LOCK_HIGH, "serial_locks_low");
 		}
 
-		if (pdev->id==0) {
+		if ((pdev->id == 0) && (msm_uport->cpu_lock_supported)) {
 			int result;
-			result = sysfs_create_group(&pdev->dev.kobj, &serial_hs_attribute_group);
+			result = sysfs_create_group(&pdev->dev.kobj,
+					&serial_hs_attribute_group);
 			if (result)
-				printk("------ msm_serial_hs registers attribute fail!! ------");
+				printk(KERN_ERR "--- %s reg attr fail!! ---",
+						__func__);
 
-			SERIAL_HS_SET_DEVICE_ATTR(serial_lock_cpu, 0644, show_serial_lock_cpu, store_serial_lock_cpu);
+			SERIAL_HS_SET_DEVICE_ATTR(serial_lock_cpu,
+					0644, show_serial_lock_cpu,
+					store_serial_lock_cpu);
+		}
+		#endif
+
+		#if 1	/* only for legend? */
+		if (pdata->need_config) {
+			msm_uport->config_as_uart = pdata->config_as_uart;
+			msm_uport->config_as_gpio = pdata->config_as_gpio;
+			msm_uport->need_config = pdata->need_config;
 		}
 		#endif
 	}
@@ -1499,7 +1536,7 @@ static int __init msm_hs_probe(struct platform_device *pdev)
 		return -ENXIO;
 	msm_uport->dma_tx_channel = resource->start;
 	msm_uport->dma_rx_channel = resource->end;
-	
+
 	resource = platform_get_resource_byname(pdev, IORESOURCE_DMA,
 						"uartdm_crci");
 	if (unlikely(!resource))
@@ -1528,11 +1565,7 @@ static int __init msm_hs_probe(struct platform_device *pdev)
 	hrtimer_init(&msm_uport->clk_off_timer, CLOCK_MONOTONIC,
 		     HRTIMER_MODE_REL);
 	msm_uport->clk_off_timer.function = msm_hs_clk_off_retry;
-	#ifdef SERIAL_FOR_BTIPS	//for btips
 	msm_uport->clk_off_delay = ktime_set(0, 10000000);  /* 1ms --> 10ms */
-	#else
-	msm_uport->clk_off_delay = ktime_set(0, 1000000);  /* 1ms */
-	#endif
 
 	uport->line = pdev->id;
 	return uart_add_one_port(&msm_hs_driver, uport);
@@ -1549,12 +1582,12 @@ static int __init msm_serial_hs_init(void)
 
 	ret = uart_register_driver(&msm_hs_driver);
 	if (unlikely(ret)) {
-		printk(KERN_ERR "%s failed to load\n", __FUNCTION__);
+		printk(KERN_ERR "%s failed to load\n", __func__);
 		return ret;
 	}
 	ret = platform_driver_register(&msm_serial_hs_platform_driver);
 	if (ret) {
-		printk(KERN_ERR "%s failed to load\n", __FUNCTION__);
+		printk(KERN_ERR "%s failed to load\n", __func__);
 		uart_unregister_driver(&msm_hs_driver);
 		return ret;
 	}
@@ -1583,6 +1616,11 @@ static void msm_hs_shutdown(struct uart_port *uport)
 	/* Disable the receiver */
 	msm_hs_write(uport, UARTDM_CR_ADDR, UARTDM_CR_RX_DISABLE_BMSK);
 
+	/* disable irq wakeup when shutdown **/
+	if (use_low_power_wakeup(msm_uport))
+		if (unlikely(set_irq_wake(msm_uport->wakeup.irq, 0)))
+			return;
+
 	/* Free the interrupt */
 	free_irq(uport->irq, msm_uport);
 	if (use_low_power_wakeup(msm_uport))
@@ -1602,6 +1640,9 @@ static void msm_hs_shutdown(struct uart_port *uport)
 			 UART_XMIT_SIZE, DMA_TO_DEVICE);
 
 	spin_unlock_irqrestore(&uport->lock, flags);
+
+	/* make sure wake_lock is released */
+	wake_lock_timeout(&msm_uport->rx.wake_lock, HZ / 10);
 }
 
 static void __exit msm_serial_hs_exit(void)
@@ -1611,9 +1652,49 @@ static void __exit msm_serial_hs_exit(void)
 	uart_unregister_driver(&msm_hs_driver);
 }
 
+static int msm_serial_hs_suspend(struct platform_device *pdev, pm_message_t msg)
+{
+	struct msm_hs_port *msm_uport;
+
+	if (pdev->id < 0 || pdev->id >= UARTDM_NR) {
+		printk(KERN_ERR "Invalid plaform device ID = %d\n", pdev->id);
+		return -EINVAL;
+	}
+
+	msm_uport = &q_uart_port[pdev->id];
+
+	if (msm_uport->need_config) {
+		if (msm_uport->need_config())
+			msm_uport->config_as_gpio();
+	}
+
+	return 0;
+}
+
+static int msm_serial_hs_resume(struct platform_device *pdev)
+{
+	struct msm_hs_port *msm_uport;
+
+	if (pdev->id < 0 || pdev->id >= UARTDM_NR) {
+		printk(KERN_ERR "Invalid plaform device ID = %d\n", pdev->id);
+		return -EINVAL;
+	}
+
+	msm_uport = &q_uart_port[pdev->id];
+
+	if (msm_uport->need_config) {
+		if (msm_uport->need_config())
+			msm_uport->config_as_uart();
+	}
+
+	return 0;
+}
+
 static struct platform_driver msm_serial_hs_platform_driver = {
 	.probe = msm_hs_probe,
 	.remove = msm_hs_remove,
+	.suspend = msm_serial_hs_suspend,
+	.resume = msm_serial_hs_resume,
 	.driver = {
 		   .name = "msm_serial_hs",
 		   },
