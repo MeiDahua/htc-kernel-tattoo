@@ -81,6 +81,7 @@ enum {
 	BINDER_DEBUG_BUFFER_ALLOC           = 1U << 13,
 	BINDER_DEBUG_PRIORITY_CAP           = 1U << 14,
 	BINDER_DEBUG_BUFFER_ALLOC_ASYNC     = 1U << 15,
+	BINDER_DEBUG_IOCTL                  = 1U << 16,
 };
 static uint32_t binder_debug_mask = BINDER_DEBUG_USER_ERROR |
 	BINDER_DEBUG_FAILED_TRANSACTION | BINDER_DEBUG_DEAD_TRANSACTION;
@@ -1502,19 +1503,21 @@ static void binder_transaction(struct binder_proc *proc,
 	if (reply)
 		binder_debug(BINDER_DEBUG_TRANSACTION,
 			     "binder: %d:%d BC_REPLY %d -> %d:%d, "
-			     "data %p-%p size %zd-%zd\n",
+			     "data %p-%p size %zd-%zd async: %d\n",
 			     proc->pid, thread->pid, t->debug_id,
 			     target_proc->pid, target_thread->pid,
 			     tr->data.ptr.buffer, tr->data.ptr.offsets,
-			     tr->data_size, tr->offsets_size);
+			     tr->data_size, tr->offsets_size,
+			     (tr->flags & TF_ONE_WAY) ? 1 : 0);
 	else
 		binder_debug(BINDER_DEBUG_TRANSACTION,
 			     "binder: %d:%d BC_TRANSACTION %d -> "
-			     "%d - node %d, data %p-%p size %zd-%zd\n",
+			     "%d - node %d, data %p-%p size %zd-%zd async: %d\n",
 			     proc->pid, thread->pid, t->debug_id,
 			     target_proc->pid, target_node->debug_id,
 			     tr->data.ptr.buffer, tr->data.ptr.offsets,
-			     tr->data_size, tr->offsets_size);
+			     tr->data_size, tr->offsets_size,
+			     (tr->flags & TF_ONE_WAY) ? 1 : 0);
 
 	if (!reply && !(tr->flags & TF_ONE_WAY))
 		t->from = thread;
@@ -1798,7 +1801,7 @@ int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 			    (cmd == BC_INCREFS || cmd == BC_ACQUIRE)) {
 				ref = binder_get_ref_for_node(proc,
 					       binder_context_mgr_node);
-				if (ref->desc != target) {
+				if (ref && (ref->desc != target)) {
 					binder_user_error("binder: %d:"
 						"%d tried to acquire "
 						"reference to desc 0, "
@@ -2612,7 +2615,9 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	unsigned int size = _IOC_SIZE(cmd);
 	void __user *ubuf = (void __user *)arg;
 
-	/*printk(KERN_INFO "binder_ioctl: %d:%d %x %lx\n", proc->pid, current->pid, cmd, arg);*/
+	binder_debug(BINDER_DEBUG_IOCTL,
+		     "binder_ioctl begin: %d:%d %x %lx\n",
+		     proc->pid, current->pid, cmd, arg);
 
 	ret = wait_event_interruptible(binder_user_error_wait, binder_stop_on_user_error < 2);
 	if (ret)
@@ -2731,6 +2736,9 @@ err:
 	wait_event_interruptible(binder_user_error_wait, binder_stop_on_user_error < 2);
 	if (ret && ret != -ERESTARTSYS)
 		printk(KERN_INFO "binder: %d:%d ioctl %x %lx returned %d\n", proc->pid, current->pid, cmd, arg, ret);
+	binder_debug(BINDER_DEBUG_IOCTL,
+		     "binder_ioctl end: %d:%d %x %lx\n",
+		     proc->pid, current->pid, cmd, arg);
 	return ret;
 }
 
